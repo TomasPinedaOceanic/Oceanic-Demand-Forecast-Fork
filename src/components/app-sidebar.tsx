@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useState } from "react"
 import {
   LayoutDashboard,
   Upload,
@@ -11,15 +12,16 @@ import {
   ChevronLeft,
   ChevronRight,
   Activity,
+  Package,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { useState } from "react"
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/data-ingestion", label: "Ingesta de Datos", icon: Upload },
+  { href: "/inventory", label: "Inventario", icon: Package },
   { href: "/dashboard", label: "Predicciones", icon: BarChart3, disabled: true },
   { href: "/dashboard", label: "Configuracion", icon: Settings, disabled: true },
 ]
