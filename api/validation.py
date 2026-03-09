@@ -83,3 +83,76 @@ def validate_sales_dataframe(
     cleaned = cleaned.sort_values([sku_col, date_col]).reset_index(drop=True)
 
     return ValidationResult(cleaned=cleaned, issues=issues, warnings=warnings)
+
+def validate_inventory_dataframe(df: pd.DataFrame) -> ValidationResult:
+    """
+    Validates and cleans the uploaded inventory dataframe.
+    Required columns: date, item_id, store_id, inventory_on_hand, lead_time_days, unit_cost.
+    Optional columns: inventory_available, reorder_quantity.
+    """
+    required = ["date", "item_id", "store_id", "inventory_on_hand", "lead_time_days", "unit_cost"]
+
+    df = _normalize_columns(df)
+
+    missing_cols = [c for c in required if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Missing required columns: {missing_cols}. "
+            f"Received columns: {list(df.columns)}"
+        )
+
+    cleaned = df.copy()
+    issues: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+
+    # Convert types
+    cleaned["date"]             = pd.to_datetime(cleaned["date"], errors="coerce")
+    cleaned["inventory_on_hand"] = pd.to_numeric(cleaned["inventory_on_hand"], errors="coerce")
+    cleaned["lead_time_days"]   = pd.to_numeric(cleaned["lead_time_days"], errors="coerce")
+    cleaned["unit_cost"]        = pd.to_numeric(cleaned["unit_cost"], errors="coerce")
+
+    # Handle optional columns
+    if "inventory_available" not in cleaned.columns:
+        cleaned["inventory_available"] = cleaned["inventory_on_hand"]
+    else:
+        cleaned["inventory_available"] = pd.to_numeric(
+            cleaned["inventory_available"], errors="coerce"
+        ).fillna(cleaned["inventory_on_hand"])
+
+    if "reorder_quantity" not in cleaned.columns:
+        cleaned["reorder_quantity"] = None
+    else:
+        cleaned["reorder_quantity"] = pd.to_numeric(
+            cleaned["reorder_quantity"], errors="coerce"
+        )
+
+    # Detect invalid rows
+    bad_date     = cleaned["date"].isna()
+    bad_sku      = cleaned["item_id"].isna() | (cleaned["item_id"].astype(str).str.strip() == "")
+    bad_stock    = cleaned["inventory_on_hand"].isna()
+    bad_leadtime = cleaned["lead_time_days"].isna()
+    bad_cost     = cleaned["unit_cost"].isna()
+
+    bad_any = bad_date | bad_sku | bad_stock | bad_leadtime | bad_cost
+
+    if bad_any.any():
+        for idx, row in cleaned.loc[bad_any].iterrows():
+            reasons = []
+            if pd.isna(row["date"]):                                          reasons.append("invalid date")
+            if pd.isna(row["item_id"]) or str(row["item_id"]).strip() == "": reasons.append("empty item_id")
+            if pd.isna(row["inventory_on_hand"]):                             reasons.append("invalid inventory_on_hand")
+            if pd.isna(row["lead_time_days"]):                                reasons.append("invalid lead_time_days")
+            if pd.isna(row["unit_cost"]):                                     reasons.append("invalid unit_cost")
+            issues.append({"row_index": int(idx), "reasons": reasons})
+
+        warnings.append(f"{int(bad_any.sum())} rows with invalid data detected.")
+        cleaned = cleaned.loc[~bad_any].copy()
+        warnings.append("Invalid rows dropped.")
+
+    # Clean item_id
+    cleaned["item_id"] = cleaned["item_id"].astype(str).str.strip()
+
+    # Sort
+    cleaned = cleaned.sort_values(["item_id", "date"]).reset_index(drop=True)
+
+    return ValidationResult(cleaned=cleaned, issues=issues, warnings=warnings)

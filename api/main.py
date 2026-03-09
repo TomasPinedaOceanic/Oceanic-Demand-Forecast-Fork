@@ -6,7 +6,7 @@ from fastapi.encoders import jsonable_encoder
 
 from sqlalchemy.orm import Session
 
-from api.validation import validate_sales_dataframe
+from api.validation import validate_sales_dataframe, validate_inventory_dataframe
 from api.dataframe_store import (
     save_dataframe,
     get_latest_dataset_id,
@@ -14,7 +14,7 @@ from api.dataframe_store import (
 )
 
 from database.database import get_db
-from database.models import Company, DataSource, RawData, Prediction
+from database.models import Company, DataSource, RawData, Prediction, InventorySnapshot
 
 app = FastAPI(title="Oceanic Demand Forecast API")
 
@@ -156,47 +156,16 @@ async def upload_inventory(
 
         # Step 1: Parse file
         dataframe = parse_uploaded_file(file)
-        dataframe.columns = [str(c).strip().lower() for c in dataframe.columns]
 
-        # Step 2: Validate required columns
-        required = ["date", "item_id", "store_id", "inventory_on_hand", "lead_time_days", "unit_cost"]
-        missing = [c for c in required if c not in dataframe.columns]
-        if missing:
-            raise ValueError(f"Missing required columns: {missing}")
+        # Step 2: Validate and clean
+        result = validate_inventory_dataframe(dataframe)
+        dataframe = result.cleaned
 
-        # Step 3: Convert types
-        dataframe["date"] = pd.to_datetime(dataframe["date"], errors="coerce")
-        dataframe["inventory_on_hand"] = pd.to_numeric(dataframe["inventory_on_hand"], errors="coerce")
-        dataframe["lead_time_days"] = pd.to_numeric(dataframe["lead_time_days"], errors="coerce")
-        dataframe["unit_cost"] = pd.to_numeric(dataframe["unit_cost"], errors="coerce")
-
-        # Step 4: Handle optional columns
-        if "inventory_available" not in dataframe.columns:
-            dataframe["inventory_available"] = dataframe["inventory_on_hand"]
-        else:
-            dataframe["inventory_available"] = pd.to_numeric(
-                dataframe["inventory_available"], errors="coerce"
-            ).fillna(dataframe["inventory_on_hand"])
-
-        if "reorder_quantity" not in dataframe.columns:
-            dataframe["reorder_quantity"] = None
-        else:
-            dataframe["reorder_quantity"] = pd.to_numeric(
-                dataframe["reorder_quantity"], errors="coerce"
-            )
-
-        # Step 5: Drop invalid rows
-        invalid = dataframe[["date", "item_id", "inventory_on_hand", "lead_time_days", "unit_cost"]].isna().any(axis=1)
-        if invalid.any():
-            dataframe = dataframe[~invalid].copy()
-
-        # Step 6: Save to inventory_snapshot table
-        from database.models import InventorySnapshot
-
-        # Delete existing snapshots for this company before inserting new ones
+        # Step 3: Delete existing snapshots for this company before inserting new ones
         db.query(InventorySnapshot).filter(InventorySnapshot.company_id == company_id).delete()
         db.commit()
 
+        # Step 4: Save to inventory_snapshot table
         snapshots = [
             InventorySnapshot(
                 company_id=company_id,
@@ -226,6 +195,11 @@ async def upload_inventory(
         "company_id": company_id,
         "skus": dataframe["item_id"].tolist(),
         "preview": dataframe.head(5).where(dataframe.notna(), other=None).to_dict(orient="records"),
+        "validation": {
+            "warnings": result.warnings,
+            "issues_preview": result.issues[:20],
+            "issues_count": len(result.issues),
+        },
     }
 
 # =============================================================================
@@ -280,51 +254,38 @@ async def get_predictions(
 @app.get(
     "/api/inventory",
     tags=["Inventory"],
-    summary="Get current inventory by SKU (Sprint 1 — from latest upload)",
-    description="Returns last known units_sold per SKU from the most recent upload. Forecast-based stock status available in Sprint 2.",
+    summary="Get current inventory by SKU",
+    description="Returns current stock levels per SKU from the latest inventory snapshot.",
 )
-async def get_inventory():
+async def get_inventory(db: Session = Depends(get_db)):
     try:
-        dataset_id = get_latest_dataset_id()
-        df = load_dataframe(dataset_id)
-        df.columns = [str(c).strip().lower() for c in df.columns]
 
-        required = ["item_id", "date", "units_sold"]
-        missing = [c for c in required if c not in df.columns]
-        if missing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Latest dataset is missing required columns for inventory: {missing}",
-            )
-
-        df["date"]       = pd.to_datetime(df["date"], errors="coerce")
-        df["units_sold"] = pd.to_numeric(df["units_sold"], errors="coerce").fillna(0)
-        df = df.dropna(subset=["date"])
-
-        last_rows = (
-            df.sort_values(["item_id", "date"])
-              .groupby("item_id", as_index=False)
-              .tail(1)
+        snapshots = (
+            db.query(InventorySnapshot)
+            .order_by(InventorySnapshot.item_id)
+            .all()
         )
 
-        inventory = [
-            {
-                "item_id": row["item_id"],
-                "current_stock": int(row["units_sold"]),
-                "next_month_forecast": 0,
-                "stock_status": "TBD",
-                "last_updated": row["date"].date().isoformat(),
-            }
-            for _, row in last_rows.sort_values("item_id").iterrows()
-        ]
+        if not snapshots:
+            raise HTTPException(status_code=404, detail="No inventory data found. Please upload an inventory file first.")
 
         return {
-            "dataset_id": dataset_id,
-            "items": inventory,
+            "items": [
+                {
+                    "item_id": s.item_id,
+                    "store_id": s.store_id,
+                    "current_stock": s.inventory_on_hand,
+                    "available_stock": s.inventory_available if s.inventory_available is not None else s.inventory_on_hand,
+                    "lead_time_days": s.lead_time_days,
+                    "unit_cost": float(s.unit_cost),
+                    "next_month_forecast": 0,    # Sprint 2
+                    "stock_status": "TBD",       # Sprint 2
+                    "last_updated": s.date.isoformat(),
+                }
+                for s in snapshots
+            ]
         }
 
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
