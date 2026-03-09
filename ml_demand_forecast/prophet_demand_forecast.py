@@ -419,7 +419,7 @@ def save_predictions_to_db(forecasts, company_id=1):
 if __name__ == '__main__':
 
     # Paths
-    DATA_PATH     = 'reference_dataset.csv'
+    DATA_PATH     = 'reference_sales.csv'
     CUTOFF_DAYS   = 90
     FORECAST_DAYS = 90
 
