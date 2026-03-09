@@ -394,8 +394,7 @@ def save_predictions_to_db(forecasts, company_id=1):
             for _, row in forecast_df.iterrows():
                 records.append(Prediction(
                     company_id=company_id,
-                    product_id=None,
-                    sku=sku,
+                    item_id=sku,
                     forecast_date=row['ds'].date(),
                     predicted_demand=row['yhat'],
                     yhat_lower=row['yhat_lower'],

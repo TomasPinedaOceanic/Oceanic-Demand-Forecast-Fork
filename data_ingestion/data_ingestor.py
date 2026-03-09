@@ -146,20 +146,20 @@ async def get_predictions(
         query = db.query(Prediction)
 
         if sku:
-            query = query.filter(Prediction.sku == sku)
+            query = query.filter(Prediction.item_id == sku)
         if date_from:
             query = query.filter(Prediction.forecast_date >= date_from)
         if date_to:
             query = query.filter(Prediction.forecast_date <= date_to)
 
-        predictions = query.order_by(Prediction.sku, Prediction.forecast_date).all()
+        predictions = query.order_by(Prediction.item_id, Prediction.forecast_date).all()
 
         if not predictions:
             return []
 
         return [
             {
-                "item_id": p.sku,
+                "item_id": p.item_id,
                 "date": p.forecast_date.isoformat(),
                 "yhat": float(p.predicted_demand),
                 "yhat_lower": float(p.yhat_lower),
