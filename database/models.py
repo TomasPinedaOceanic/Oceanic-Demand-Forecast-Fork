@@ -37,7 +37,6 @@ class SalesTransaction(Base):
     date = Column(Date)
     units_sold = Column(Integer)
     sell_price = Column(Numeric(12, 2))
-    # TODO: adapt fully to M5 schema in Sprint 2
 
 class Prediction(Base):
     __tablename__ = "prediction"
