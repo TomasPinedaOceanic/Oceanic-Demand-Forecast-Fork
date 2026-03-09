@@ -35,16 +35,16 @@ async def health_check():
     return {"message": "Oceanic Demand Forecast API is running"}
 
 # =============================================================================
-# POST /upload-file
+# POST /upload-sales
 # =============================================================================
 
 @app.post(
-    "/upload-file",
+    "/upload-sales",
     tags=["Ingestion"],
     summary="Upload sales CSV or Excel file",
     description="Accepts a .csv or .xlsx file, validates it, stores it in the database, and triggers the demand forecast pipeline.",
 )
-async def upload_file(
+async def upload_sales(
     file: UploadFile = File(..., description="Sales file: .csv, .xlsx or .xls"),
     db: Session = Depends(get_db),
 ):
@@ -124,6 +124,108 @@ async def upload_file(
             "data_source_id": data_source.id,
             "raw_rows_saved": len(dataframe),
         },
+    }
+
+# =============================================================================
+# POST /upload-inventory
+# =============================================================================
+
+@app.post(
+    "/upload-inventory",
+    tags=["Ingestion"],
+    summary="Upload inventory snapshot CSV or Excel file",
+    description="Accepts a .csv or .xlsx file with current inventory levels per SKU and stores it in the database.",
+)
+async def upload_inventory(
+    file: UploadFile = File(..., description="Inventory file: .csv, .xlsx or .xls"),
+    db: Session = Depends(get_db),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file selected")
+
+    try:
+        # Ensure company exists
+        company = db.query(Company).order_by(Company.id.asc()).first()
+        if not company:
+            company = Company(name="Oceanic Demo Company")
+            db.add(company)
+            db.commit()
+            db.refresh(company)
+
+        company_id = company.id
+
+        # Step 1: Parse file
+        dataframe = parse_uploaded_file(file)
+        dataframe.columns = [str(c).strip().lower() for c in dataframe.columns]
+
+        # Step 2: Validate required columns
+        required = ["date", "item_id", "store_id", "inventory_on_hand", "lead_time_days", "unit_cost"]
+        missing = [c for c in required if c not in dataframe.columns]
+        if missing:
+            raise ValueError(f"Missing required columns: {missing}")
+
+        # Step 3: Convert types
+        dataframe["date"] = pd.to_datetime(dataframe["date"], errors="coerce")
+        dataframe["inventory_on_hand"] = pd.to_numeric(dataframe["inventory_on_hand"], errors="coerce")
+        dataframe["lead_time_days"] = pd.to_numeric(dataframe["lead_time_days"], errors="coerce")
+        dataframe["unit_cost"] = pd.to_numeric(dataframe["unit_cost"], errors="coerce")
+
+        # Step 4: Handle optional columns
+        if "inventory_available" not in dataframe.columns:
+            dataframe["inventory_available"] = dataframe["inventory_on_hand"]
+        else:
+            dataframe["inventory_available"] = pd.to_numeric(
+                dataframe["inventory_available"], errors="coerce"
+            ).fillna(dataframe["inventory_on_hand"])
+
+        if "reorder_quantity" not in dataframe.columns:
+            dataframe["reorder_quantity"] = None
+        else:
+            dataframe["reorder_quantity"] = pd.to_numeric(
+                dataframe["reorder_quantity"], errors="coerce"
+            )
+
+        # Step 5: Drop invalid rows
+        invalid = dataframe[["date", "item_id", "inventory_on_hand", "lead_time_days", "unit_cost"]].isna().any(axis=1)
+        if invalid.any():
+            dataframe = dataframe[~invalid].copy()
+
+        # Step 6: Save to inventory_snapshot table
+        from database.models import InventorySnapshot
+
+        # Delete existing snapshots for this company before inserting new ones
+        db.query(InventorySnapshot).filter(InventorySnapshot.company_id == company_id).delete()
+        db.commit()
+
+        snapshots = [
+            InventorySnapshot(
+                company_id=company_id,
+                date=row["date"].date(),
+                item_id=str(row["item_id"]).strip(),
+                store_id=str(row["store_id"]).strip() if pd.notna(row.get("store_id")) else None,
+                inventory_on_hand=int(row["inventory_on_hand"]),
+                inventory_available=int(row["inventory_available"]) if pd.notna(row["inventory_available"]) else None,
+                lead_time_days=int(row["lead_time_days"]),
+                unit_cost=float(row["unit_cost"]),
+                reorder_quantity=int(row["reorder_quantity"]) if pd.notna(row.get("reorder_quantity")) else None,
+            )
+            for _, row in dataframe.iterrows()
+        ]
+
+        db.bulk_save_objects(snapshots)
+        db.commit()
+
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Error processing inventory file: {error}") from error
+
+    return {
+        "filename": file.filename,
+        "rows_saved": len(snapshots),
+        "company_id": company_id,
+        "skus": dataframe["item_id"].tolist(),
+        "preview": dataframe.head(5).where(dataframe.notna(), other=None).to_dict(orient="records"),
     }
 
 # =============================================================================
