@@ -6,8 +6,8 @@ from fastapi.encoders import jsonable_encoder
 
 from sqlalchemy.orm import Session
 
-from data_ingestion.validation import validate_sales_dataframe
-from data_ingestion.dataframe_store import (
+from api.validation import validate_sales_dataframe
+from api.dataframe_store import (
     save_dataframe,
     get_latest_dataset_id,
     load_dataframe,
