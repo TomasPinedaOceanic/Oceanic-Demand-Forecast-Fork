@@ -413,6 +413,43 @@ def save_predictions_to_db(forecasts, company_id=1):
         db.close()
 
 # =============================================================================
+# Pipeline Entry Point (callable from FastAPI)
+# =============================================================================
+
+def run_pipeline(df: pd.DataFrame, company_id: int = 1):
+    """
+    Runs the full Prophet demand forecasting pipeline.
+    Called from POST /upload-sales as a background task.
+    """
+    CUTOFF_DAYS   = 90
+    FORECAST_DAYS = 90
+
+    holidays_df = build_holidays(df)
+    cutoff = df['date'].max() - pd.Timedelta(days=CUTOFF_DAYS)
+
+    # Pilot SKU tuning
+    pilot_sku      = df.groupby('item_id')['units_sold'].sum().idxmax()
+    df_pilot       = prepare_prophet_df(df, pilot_sku)
+    df_pilot_train = df_pilot[df_pilot['ds'] <= cutoff]
+
+    best_params = hyperparameter_tuning(df_pilot_train, holidays_df)
+
+    # Train all SKUs
+    df_metrics, forecasts = train_all_skus(df, holidays_df,
+                                           best_params, cutoff, FORECAST_DAYS)
+
+    # Save predictions to database
+    save_predictions_to_db(forecasts, company_id=company_id)
+
+    print("\n── Pipeline completed ───────────────────────────────────────")
+    df_valid = df_metrics[df_metrics['avg_sales_test'] >= 5]
+    print(f"  SKUs trained:              {len(df_metrics)}")
+    print(f"  SKUs with demand ≥5/day:   {len(df_valid)}")
+    print(f"  Avg MAE relative:          {df_valid['mae_relative_%'].mean():.1f}%")
+    print("────────────────────────────────────────────────────────────")
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -468,5 +505,5 @@ if __name__ == '__main__':
 
     # Save predictions to database
     save_predictions_to_db(forecasts)
-    
+
     print(f"\nDone. All plots saved to '{PLOTS_DIR}/'")

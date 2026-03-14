@@ -1,19 +1,14 @@
 import pandas as pd
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, Depends
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.encoders import jsonable_encoder
 
 from sqlalchemy.orm import Session
 
 from api.validation import validate_sales_dataframe, validate_inventory_dataframe
-from api.dataframe_store import (
-    save_dataframe,
-    get_latest_dataset_id,
-    load_dataframe,
-)
+from demand_forecast.prophet_demand_forecast import run_pipeline
 
-from database.database import get_db
+from database.database import get_db, SessionLocal
 from database.models import Company, DataSource, SalesTransaction, Prediction, InventorySnapshot
 
 app = FastAPI(title="Oceanic Demand Forecast API")
@@ -35,6 +30,34 @@ async def health_check():
     return {"message": "Oceanic Demand Forecast API is running"}
 
 # =============================================================================
+# Background task
+# =============================================================================
+
+def run_prophet_background(df: pd.DataFrame, company_id: int, data_source_id: int):
+    """Runs Prophet pipeline in background and updates DataSource status."""
+    db = SessionLocal()
+    try:
+        # Update status to processing
+        data_source = db.query(DataSource).filter(DataSource.id == data_source_id).first()
+        data_source.status = "processing"
+        db.commit()
+
+        # Run Prophet pipeline
+        run_pipeline(df, company_id=company_id)
+
+        # Update status to ready
+        data_source.status = "ready"
+        db.commit()
+
+    except Exception as e:
+        data_source = db.query(DataSource).filter(DataSource.id == data_source_id).first()
+        data_source.status = "failed"
+        db.commit()
+        print(f"Prophet pipeline failed: {e}")
+    finally:
+        db.close()
+
+# =============================================================================
 # POST /upload-sales
 # =============================================================================
 
@@ -42,9 +65,10 @@ async def health_check():
     "/upload-sales",
     tags=["Ingestion"],
     summary="Upload sales CSV or Excel file",
-    description="Accepts a .csv or .xlsx file, validates it, stores it in the database, and triggers the demand forecast pipeline.",
+    description="Accepts a .csv or .xlsx file, validates it, stores it in sales_transaction table, and triggers the demand forecast pipeline in the background.",
 )
 async def upload_sales(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Sales file: .csv, .xlsx or .xls"),
     db: Session = Depends(get_db),
 ):
@@ -69,7 +93,7 @@ async def upload_sales(
         result = validate_sales_dataframe(dataframe)
         dataframe = result.cleaned
 
-        # Step 3: Save DataSource record
+        # Step 3: Save DataSource record with status "uploaded"
         data_source = DataSource(
             company_id=company_id,
             filename=file.filename,
@@ -103,6 +127,14 @@ async def upload_sales(
         db.bulk_save_objects(transactions)
         db.commit()
 
+        # Step 6: Trigger Prophet pipeline in background
+        background_tasks.add_task(
+            run_prophet_background,
+            df=dataframe,
+            company_id=company_id,
+            data_source_id=data_source.id,
+        )
+
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
@@ -113,6 +145,8 @@ async def upload_sales(
         "rows_saved": len(transactions),
         "company_id": company_id,
         "data_source_id": data_source.id,
+        "status": "processing",
+        "message": "File uploaded successfully. Demand forecast is being generated in the background.",
         "columns": [str(col) for col in dataframe.columns],
         "preview": dataframe.head(5).where(dataframe.notna(), other=None).to_dict(orient="records"),
         "validation": {
@@ -199,6 +233,44 @@ async def upload_inventory(
     }
 
 # =============================================================================
+# GET /api/predictions/status
+# =============================================================================
+
+@app.get(
+    "/api/predictions/status",
+    tags=["Predictions"],
+    summary="Get current forecast generation status",
+    description="Returns the status of the latest demand forecast pipeline run. Frontend polls this endpoint to know when predictions are ready.",
+)
+async def get_predictions_status(db: Session = Depends(get_db)):
+    try:
+        data_source = (
+            db.query(DataSource)
+            .order_by(DataSource.upload_date.desc())
+            .first()
+        )
+
+        if not data_source:
+            return {"status": "no_data", "message": "No files uploaded yet."}
+
+        messages = {
+            "uploaded":   "File received. Forecast pipeline starting...",
+            "processing": "Forecast is being generated. This may take a few minutes.",
+            "ready":      "Predictions are ready.",
+            "failed":     "Forecast generation failed. Please try uploading again.",
+        }
+
+        return {
+            "status": data_source.status,
+            "message": messages.get(data_source.status, "Unknown status."),
+            "filename": data_source.filename,
+            "upload_date": data_source.upload_date.isoformat(),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching status: {e}")
+
+# =============================================================================
 # GET /api/predictions
 # =============================================================================
 
@@ -215,6 +287,26 @@ async def get_predictions(
     db: Session = Depends(get_db),
 ):
     try:
+        # Check forecast status before returning predictions
+        data_source = (
+            db.query(DataSource)
+            .order_by(DataSource.upload_date.desc())
+            .first()
+        )
+
+        if not data_source:
+            raise HTTPException(status_code=404, detail="No data uploaded yet.")
+
+        if data_source.status == "processing":
+            raise HTTPException(status_code=202, detail="Predictions are still being generated. Please try again shortly.")
+
+        if data_source.status == "failed":
+            raise HTTPException(status_code=503, detail="Forecast generation failed. Please upload the file again.")
+
+        if data_source.status != "ready":
+            raise HTTPException(status_code=400, detail=f"Unexpected status: {data_source.status}")
+        
+        # Fetch predictions
         query = db.query(Prediction)
 
         if sku:
