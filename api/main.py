@@ -14,7 +14,7 @@ from api.dataframe_store import (
 )
 
 from database.database import get_db
-from database.models import Company, DataSource, RawData, Prediction, InventorySnapshot
+from database.models import Company, DataSource, SalesTransaction, Prediction, InventorySnapshot
 
 app = FastAPI(title="Oceanic Demand Forecast API")
 
@@ -52,7 +52,7 @@ async def upload_sales(
         raise HTTPException(status_code=400, detail="No file selected")
 
     try:
-        # Ensure a company exists — create demo company if none found
+        # Ensure company exists
         company = db.query(Company).order_by(Company.id.asc()).first()
         if not company:
             company = Company(name="Oceanic Demo Company")
@@ -69,10 +69,7 @@ async def upload_sales(
         result = validate_sales_dataframe(dataframe)
         dataframe = result.cleaned
 
-        # Step 3: Save Parquet artifact
-        dataset_id, artifact_path = save_dataframe(file.filename, dataframe)
-
-        # Step 4: Save DataSource record
+        # Step 3: Save DataSource record
         data_source = DataSource(
             company_id=company_id,
             filename=file.filename,
@@ -82,22 +79,28 @@ async def upload_sales(
         db.commit()
         db.refresh(data_source)
 
-        # Step 5: Save raw rows as JSONB — replace NaN with None for valid JSON
-        records = dataframe.reset_index(drop=True).where(
-            dataframe.notna(), other=None
-        ).to_dict(orient="records")
+        # Step 4: Delete existing sales transactions for this company
+        db.query(SalesTransaction).filter(SalesTransaction.company_id == company_id).delete()
+        db.commit()
 
-        raw_objects = [
-            RawData(
+        # Step 5: Save rows to sales_transaction table
+        transactions = [
+            SalesTransaction(
                 company_id=company_id,
-                data_source_id=data_source.id,
-                row_number=i,
-                data=jsonable_encoder(rec),
+                item_id=str(row["item_id"]).strip(),
+                store_id=str(row["store_id"]).strip() if pd.notna(row.get("store_id")) else None,
+                cat_id=str(row["cat_id"]).strip() if pd.notna(row.get("cat_id")) else None,
+                dept_id=str(row["dept_id"]).strip() if pd.notna(row.get("dept_id")) else None,
+                date=row["date"].date(),
+                units_sold=int(row["units_sold"]),
+                sell_price=float(row["sell_price"]) if pd.notna(row.get("sell_price")) else None,
+                holiday_promotion=int(row["holiday_promotion"]) if pd.notna(row.get("holiday_promotion")) else None,
+                event_name_1=str(row["event_name_1"]).strip() if pd.notna(row.get("event_name_1")) else None,
             )
-            for i, rec in enumerate(records, start=1)
+            for _, row in dataframe.iterrows()
         ]
 
-        db.bulk_save_objects(raw_objects)
+        db.bulk_save_objects(transactions)
         db.commit()
 
     except ValueError as error:
@@ -106,23 +109,16 @@ async def upload_sales(
         raise HTTPException(status_code=500, detail=f"Error processing dataset: {error}") from error
 
     return {
-        "dataset_id": dataset_id,
-        "artifact_path": artifact_path,
         "filename": file.filename,
-        "content_type": file.content_type,
-        "rows": int(len(dataframe)),
+        "rows_saved": len(transactions),
+        "company_id": company_id,
+        "data_source_id": data_source.id,
         "columns": [str(col) for col in dataframe.columns],
         "preview": dataframe.head(5).where(dataframe.notna(), other=None).to_dict(orient="records"),
         "validation": {
             "warnings": result.warnings,
             "issues_preview": result.issues[:20],
             "issues_count": len(result.issues),
-        },
-        "db": {
-            "company_id": company_id,
-            "company_name": company.name,
-            "data_source_id": data_source.id,
-            "raw_rows_saved": len(dataframe),
         },
     }
 

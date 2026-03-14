@@ -17,16 +17,7 @@ class DataSource(Base):
     company_id = Column(Integer, ForeignKey("company.id"))
     filename = Column(String(255))
     upload_date = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
-    status = Column(String(50))
-
-class RawData(Base):
-    __tablename__ = "raw_data"
-
-    id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey("company.id"))
-    data_source_id = Column(Integer, ForeignKey("data_source.id"))
-    row_number = Column(Integer)
-    data = Column(JSONB)
+    status = Column(String(50))  # uploaded → processing → ready / failed
 
 class SalesTransaction(Base):
     __tablename__ = "sales_transaction"
@@ -34,9 +25,15 @@ class SalesTransaction(Base):
     id = Column(Integer, primary_key=True)
     company_id = Column(Integer, ForeignKey("company.id"))
     item_id = Column(String(100), nullable=False)
-    date = Column(Date)
+    store_id = Column(String(50))
+    cat_id = Column(String(50))
+    dept_id = Column(String(50))
+    date = Column(Date, nullable=False)
     units_sold = Column(Integer)
     sell_price = Column(Numeric(12, 2))
+    holiday_promotion = Column(Integer)
+    event_name_1 = Column(String(100))
+    created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
 
 class Prediction(Base):
     __tablename__ = "prediction"
