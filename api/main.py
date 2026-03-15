@@ -336,6 +336,62 @@ async def get_predictions(
         raise HTTPException(status_code=500, detail=f"Error fetching predictions: {e}")
 
 # =============================================================================
+# GET /api/sales
+# =============================================================================
+
+@app.get(
+    "/api/sales",
+    tags=["Sales"],
+    summary="Get historical sales data by SKU, category, department and date range",
+    description="Returns sales transactions from the database. Optionally filter by item_id, store_id, cat_id, dept_id and/or date range.",
+)
+async def get_sales(
+    item_id: str = None,
+    store_id: str = None,
+    cat_id: str = None,
+    dept_id: str = None,
+    date_from: str = None,
+    date_to: str = None,
+    db: Session = Depends(get_db),
+):
+    try:
+        query = db.query(SalesTransaction)
+
+        if item_id:
+            query = query.filter(SalesTransaction.item_id == item_id)
+        if store_id:
+            query = query.filter(SalesTransaction.store_id == store_id)
+        if cat_id:
+            query = query.filter(SalesTransaction.cat_id == cat_id)
+        if dept_id:
+            query = query.filter(SalesTransaction.dept_id == dept_id)
+        if date_from:
+            query = query.filter(SalesTransaction.date >= date_from)
+        if date_to:
+            query = query.filter(SalesTransaction.date <= date_to)
+
+        sales = query.order_by(SalesTransaction.item_id, SalesTransaction.date).all()
+
+        if not sales:
+            return []
+
+        return [
+            {
+                "item_id": s.item_id,
+                "store_id": s.store_id,
+                "cat_id": s.cat_id,
+                "dept_id": s.dept_id,
+                "date": s.date.isoformat(),
+                "units_sold": s.units_sold,
+                "sell_price": float(s.sell_price) if s.sell_price is not None else None,
+            }
+            for s in sales
+        ]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching sales: {e}")
+
+# =============================================================================
 # GET /api/inventory
 # =============================================================================
 
