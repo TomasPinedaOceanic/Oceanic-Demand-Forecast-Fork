@@ -281,7 +281,7 @@ async def get_predictions_status(db: Session = Depends(get_db)):
     description="Returns Prophet forecast results. Optionally filter by item_id and/or date range.",
 )
 async def get_predictions(
-    sku: str = None,
+    item_id: str = None,
     date_from: str = None,
     date_to: str = None,
     db: Session = Depends(get_db),
@@ -309,8 +309,8 @@ async def get_predictions(
         # Fetch predictions
         query = db.query(Prediction)
 
-        if sku:
-            query = query.filter(Prediction.item_id == sku)
+        if item_id:
+            query = query.filter(Prediction.item_id == item_id)
         if date_from:
             query = query.filter(Prediction.forecast_date >= date_from)
         if date_to:
