@@ -24,7 +24,6 @@ warnings.filterwarnings('ignore')
 
 # Output folder for plots
 PLOTS_DIR = 'ml_plots'
-os.makedirs(PLOTS_DIR, exist_ok=True)
 
 # =============================================================================
 # Section 1: Data Loading
@@ -455,6 +454,9 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
 
 if __name__ == '__main__':
 
+    # Ensure plots directory exists
+    os.makedirs(PLOTS_DIR, exist_ok=True)
+    
     # Paths
     DATA_PATH     = 'reference_sales.csv'
     CUTOFF_DAYS   = 90
