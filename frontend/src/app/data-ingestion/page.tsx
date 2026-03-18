@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useRef } from "react"
 import * as XLSX from "xlsx"
+import axios from "axios"
 import {
   Upload,
   FileSpreadsheet,
@@ -9,6 +10,8 @@ import {
   XCircle,
   Trash2,
   Eye,
+  ShoppingCart,
+  Package,
 } from "lucide-react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -25,20 +28,23 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
+import { uploadSalesFile, uploadInventoryFile } from "@/lib/api"
 
-import axios from "axios"
+type UploadType = "sales" | "inventory"
 
 interface UploadedFile {
   id: string
   name: string
   size: number
   type: "csv" | "xlsx"
+  uploadType: UploadType
   status: "uploading" | "processing" | "success" | "error"
   progress: number
   rows?: number
   columns?: string[]
   preview?: Record<string, unknown>[]
   error?: string
+  dataSourceId?: number
 }
 
 function formatFileSize(bytes: number): string {
@@ -59,9 +65,9 @@ function parseFile(file: File): Promise<{ rows: number; columns: string[]; previ
         let workbook: XLSX.WorkBook
 
         if (file.name.endsWith(".csv")) {
-          workbook = XLSX.read(data, { type: "string" })
+          workbook = XLSX.read(data, { type: "string", cellDates: true })
         } else {
-          workbook = XLSX.read(data, { type: "array" })
+          workbook = XLSX.read(data, { type: "array", cellDates: true })
         }
 
         const sheetName = workbook.SheetNames[0]
@@ -93,7 +99,11 @@ export default function DataIngestionPage() {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [dragActive, setDragActive] = useState(false)
   const [previewFile, setPreviewFile] = useState<string | null>(null)
+  const [uploadType, setUploadType] = useState<UploadType>("sales")
   const inputRef = useRef<HTMLInputElement>(null)
+  const triggerPipelineRefetch = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("pipeline:refetch"))
+  }, [])
 
   const processFile = useCallback(async (file: File) => {
     const ext = file.name.split(".").pop()?.toLowerCase()
@@ -107,22 +117,41 @@ export default function DataIngestionPage() {
       name: file.name,
       size: file.size,
       type: ext === "csv" ? "csv" : "xlsx",
+      uploadType,
       status: "uploading",
       progress: 0,
     }
 
     setFiles((prev) => [newFile, ...prev])
 
-    // Simulate upload progress
-    for (let i = 0; i <= 60; i += 20) {
-      await new Promise((r) => setTimeout(r, 200))
-      setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, progress: i } : f)))
-    }
+    // Client-side parse runs in parallel for the preview table (non-blocking)
+    parseFile(file)
+      .then((result) => {
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === id
+              ? { ...f, columns: result.columns, preview: result.preview }
+              : f,
+          ),
+        )
+      })
+      .catch(() => {
+        // Preview is optional — API result is the source of truth
+      })
 
-    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: "processing", progress: 80 } : f)))
+    const uploadFn = uploadType === "sales" ? uploadSalesFile : uploadInventoryFile
 
     try {
-      const result = await parseFile(file)
+      const response = await uploadFn(file, (percent) => {
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === id
+              ? { ...f, progress: percent, status: percent < 100 ? "uploading" : "processing" }
+              : f,
+          ),
+        )
+      })
+
       setFiles((prev) =>
         prev.map((f) =>
           f.id === id
@@ -130,28 +159,32 @@ export default function DataIngestionPage() {
                 ...f,
                 status: "success",
                 progress: 100,
-                rows: result.rows,
-                columns: result.columns,
-                preview: result.preview,
+                rows: response.rows_saved,
+                dataSourceId: response.data_source_id,
               }
             : f,
         ),
       )
+      // Trigger immediate pipeline status check so the notification appears right away
+      if (uploadType === "sales") {
+        triggerPipelineRefetch()
+      }
     } catch (err) {
+      let message = "Error desconocido"
+      if (axios.isAxiosError(err)) {
+        message = err.response?.data?.detail ?? err.message
+      } else if (err instanceof Error) {
+        message = err.message
+      }
       setFiles((prev) =>
         prev.map((f) =>
           f.id === id
-            ? {
-                ...f,
-                status: "error",
-                progress: 100,
-                error: err instanceof Error ? err.message : "Error desconocido",
-              }
+            ? { ...f, status: "error", progress: 100, error: message }
             : f,
         ),
       )
     }
-  }, [])
+  }, [uploadType, triggerPipelineRefetch])
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -180,16 +213,7 @@ export default function DataIngestionPage() {
   const activePreview = files.find((f) => f.id === previewFile)
 
   return (
-    <DashboardLayout>
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold tracking-tight text-foreground lg:text-3xl">
-          Ingesta de Datos
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Cargue archivos CSV o Excel con datos historicos de ventas, inventario o finanzas para alimentar el motor predictivo.
-        </p>
-      </div>
+    <DashboardLayout title="Ingesta de Datos" subtitle="Cargue archivos CSV o Excel con datos históricos de ventas e inventario.">
 
       <Tabs defaultValue="upload" className="flex flex-col gap-6">
         <TabsList>
@@ -208,6 +232,26 @@ export default function DataIngestionPage() {
                   <CardDescription>
                     Arrastre archivos CSV o Excel aqui, o haga clic para seleccionar
                   </CardDescription>
+                  <div className="flex gap-2 pt-1">
+                    <Button
+                      variant={uploadType === "sales" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setUploadType("sales")}
+                      className="gap-1.5"
+                    >
+                      <ShoppingCart className="h-3.5 w-3.5" />
+                      Ventas
+                    </Button>
+                    <Button
+                      variant={uploadType === "inventory" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setUploadType("inventory")}
+                      className="gap-1.5"
+                    >
+                      <Package className="h-3.5 w-3.5" />
+                      Inventario
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <div
@@ -286,7 +330,9 @@ export default function DataIngestionPage() {
                             <TableRow key={idx}>
                               {activePreview.columns?.map((col) => (
                                 <TableCell key={col} className="text-card-foreground">
-                                  {String(row[col] ?? "")}
+                                  {row[col] instanceof Date
+                                    ? (row[col] as Date).toISOString().slice(0, 10)
+                                    : String(row[col] ?? "")}
                                 </TableCell>
                               ))}
                             </TableRow>
@@ -332,9 +378,14 @@ export default function DataIngestionPage() {
                             <div className="flex items-start gap-2.5">
                               <FileSpreadsheet className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
                               <div className="flex flex-col gap-0.5">
-                                <span className="text-sm font-medium leading-tight text-card-foreground">
-                                  {file.name}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-sm font-medium leading-tight text-card-foreground">
+                                    {file.name}
+                                  </span>
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0">
+                                    {file.uploadType === "sales" ? "Ventas" : "Inventario"}
+                                  </Badge>
+                                </div>
                                 <span className="text-xs text-muted-foreground">
                                   {formatFileSize(file.size)}
                                   {file.rows && ` - ${file.rows.toLocaleString()} filas`}
@@ -411,11 +462,6 @@ export default function DataIngestionPage() {
                       fields={["Stock diario", "Lead Time", "Devoluciones"]}
                       purpose="Optimizar punto de reorden"
                     />
-                    <DataChecklistItem
-                      area="Finanzas"
-                      fields={["Pagos", "Gastos fijos", "Gastos variables"]}
-                      purpose="Proyectar flujo de caja"
-                    />
                   </div>
                 </CardContent>
               </Card>
@@ -446,8 +492,9 @@ export default function DataIngestionPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Archivo</TableHead>
-                      <TableHead>Tipo</TableHead>
-                      <TableHead>Tamano</TableHead>
+                      <TableHead>Formato</TableHead>
+                      <TableHead>Datos</TableHead>
+                      <TableHead>Tamaño</TableHead>
                       <TableHead>Filas</TableHead>
                       <TableHead>Estado</TableHead>
                     </TableRow>
@@ -458,6 +505,11 @@ export default function DataIngestionPage() {
                         <TableCell className="font-medium text-card-foreground">{file.name}</TableCell>
                         <TableCell>
                           <Badge variant="outline">{file.type.toUpperCase()}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">
+                            {file.uploadType === "sales" ? "Ventas" : "Inventario"}
+                          </Badge>
                         </TableCell>
                         <TableCell className="text-muted-foreground">{formatFileSize(file.size)}</TableCell>
                         <TableCell className="text-muted-foreground">

@@ -1,33 +1,53 @@
 "use client"
 
-import { TrendingUp, TrendingDown, DollarSign, Package, ShoppingCart, AlertTriangle } from "lucide-react"
+import { useEffect, useState } from "react"
+import { TrendingUp, TrendingDown, DollarSign, Package, BarChart2, AlertTriangle } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
+import { getSales, getSalesRange, getInventory, getPredictionsStatus } from "@/lib/api"
+import { format, subMonths, startOfMonth, endOfMonth, parseISO } from "date-fns"
 
 interface KpiCardProps {
   title: string
   value: string
   change: string
   changeType: "positive" | "negative" | "neutral"
-  icon: "revenue" | "inventory" | "orders" | "alerts"
+  icon: "revenue" | "inventory" | "forecasted" | "alerts"
+  loading?: boolean
 }
 
 const iconMap = {
   revenue: DollarSign,
   inventory: Package,
-  orders: ShoppingCart,
+  forecasted: BarChart2,
   alerts: AlertTriangle,
 }
 
 const iconBgMap = {
   revenue: "bg-chart-1/10 text-chart-1",
   inventory: "bg-chart-2/10 text-chart-2",
-  orders: "bg-chart-3/10 text-chart-3",
+  forecasted: "bg-chart-3/10 text-chart-3",
   alerts: "bg-destructive/10 text-destructive",
 }
 
-export function KpiCard({ title, value, change, changeType, icon }: KpiCardProps) {
+export function KpiCard({ title, value, change, changeType, icon, loading }: KpiCardProps) {
   const Icon = iconMap[icon]
+
+  if (loading) {
+    return (
+      <Card className="bg-card">
+        <CardContent className="flex items-start justify-between pt-0">
+          <div className="flex flex-col gap-2 flex-1">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-8 w-20" />
+            <Skeleton className="h-3 w-36" />
+          </div>
+          <Skeleton className="h-10 w-10 rounded-xl" />
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card className="bg-card">
@@ -61,43 +81,135 @@ export function KpiCard({ title, value, change, changeType, icon }: KpiCardProps
   )
 }
 
+function formatRevenue(value: number): string {
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`
+  return `$${value.toFixed(0)}`
+}
+
+function formatPct(current: number, prev: number): { label: string; type: "positive" | "negative" | "neutral" } {
+  if (prev === 0) return { label: "Sin datos previos", type: "neutral" }
+  const pct = ((current - prev) / prev) * 100
+  const sign = pct >= 0 ? "+" : ""
+  return {
+    label: `${sign}${pct.toFixed(1)}% vs mes anterior`,
+    type: pct > 0 ? "positive" : pct < 0 ? "negative" : "neutral",
+  }
+}
+
 export function KpiCardsGrid() {
-  const kpis: KpiCardProps[] = [
-    {
-      title: "Ventas del Mes",
-      value: "$124.5M",
-      change: "+12.5% vs mes anterior",
-      changeType: "positive",
-      icon: "revenue",
-    },
-    {
-      title: "Unidades en Stock",
-      value: "8,432",
-      change: "-3.2% vs mes anterior",
-      changeType: "negative",
-      icon: "inventory",
-    },
-    {
-      title: "Ordenes Procesadas",
-      value: "1,247",
-      change: "+8.1% vs mes anterior",
-      changeType: "positive",
-      icon: "orders",
-    },
-    {
-      title: "Alertas Activas",
-      value: "23",
-      change: "5 criticas pendientes",
-      changeType: "neutral",
-      icon: "alerts",
-    },
-  ]
+  const [loading, setLoading] = useState(true)
+  const [kpis, setKpis] = useState<KpiCardProps[]>([])
+
+  useEffect(() => {
+    async function load() {
+      try {
+        // Use the latest available date in the dataset as "now"
+        const rangeRes = await getSalesRange().catch(() => null)
+        const anchor = rangeRes ? parseISO(rangeRes.max_date) : new Date()
+
+        const thisMonthStart = format(startOfMonth(anchor), "yyyy-MM-dd")
+        const thisMonthEnd = format(endOfMonth(anchor), "yyyy-MM-dd")
+        const prevMonthStart = format(startOfMonth(subMonths(anchor, 1)), "yyyy-MM-dd")
+        const prevMonthEnd = format(endOfMonth(subMonths(anchor, 1)), "yyyy-MM-dd")
+
+        const [salesThis, salesPrev, inventoryRes, statusRes] = await Promise.all([
+          getSales({ date_from: thisMonthStart, date_to: thisMonthEnd }),
+          getSales({ date_from: prevMonthStart, date_to: prevMonthEnd }),
+          getInventory(),
+          getPredictionsStatus(),
+        ])
+
+        // Ventas del mes (revenue = units_sold * sell_price)
+        const revenueThis = salesThis.reduce((s, r) => s + r.units_sold * (r.sell_price ?? 0), 0)
+        const revenuePrev = salesPrev.reduce((s, r) => s + r.units_sold * (r.sell_price ?? 0), 0)
+        const revChange = formatPct(revenueThis, revenuePrev)
+
+        // Unidades en stock
+        const items = inventoryRes.items
+        const totalStock = items.reduce((s, i) => s + i.current_stock, 0)
+
+        // Alertas: only count known actionable statuses (not "TBD" which is Sprint 2 placeholder)
+        const knownStatuses = new Set(["critical", "low", "excess"])
+        const alertCount = items.filter((i) => knownStatuses.has(i.stock_status)).length
+        const criticalCount = items.filter((i) => i.stock_status === "critical").length
+        const allTbd = items.length > 0 && items.every((i) => i.stock_status === "TBD")
+
+        // SKUs with predictions available
+        const forecastedSkus = statusRes.status === "ready" ? items.length : 0
+
+        setKpis([
+          {
+            title: "Ventas del Mes",
+            value: revenueThis > 0 ? formatRevenue(revenueThis) : "Sin datos",
+            change: revenueThis > 0 ? revChange.label : "Sube un archivo de ventas",
+            changeType: revenueThis > 0 ? revChange.type : "neutral",
+            icon: "revenue",
+          },
+          {
+            title: "Unidades en Stock",
+            value: items.length > 0 ? totalStock.toLocaleString() : "Sin datos",
+            change: items.length > 0 ? `${items.length} SKUs en inventario` : "Sube un archivo de inventario",
+            changeType: "neutral",
+            icon: "inventory",
+          },
+          {
+            title: "SKUs Pronosticados",
+            value: statusRes.status === "ready" ? forecastedSkus.toString() : "—",
+            change:
+              statusRes.status === "ready"
+                ? "Predicciones disponibles"
+                : statusRes.status === "processing" || statusRes.status === "uploaded"
+                  ? "Generando predicciones..."
+                  : "Sin predicciones aún",
+            changeType: statusRes.status === "ready" ? "positive" : "neutral",
+            icon: "forecasted",
+          },
+          {
+            title: "Alertas Activas",
+            value: allTbd ? "—" : alertCount.toString(),
+            change: allTbd
+              ? "Disponible en Sprint 2"
+              : criticalCount > 0
+                ? `${criticalCount} críticas pendientes`
+                : alertCount > 0
+                  ? "Sin alertas críticas"
+                  : "Inventario en buen estado",
+            changeType: allTbd ? "neutral" : criticalCount > 0 ? "negative" : "positive",
+            icon: "alerts",
+          },
+        ])
+      } catch {
+        // On error, show neutral placeholders
+        setKpis([
+          { title: "Ventas del Mes", value: "—", change: "Error al cargar datos", changeType: "neutral", icon: "revenue" },
+          { title: "Unidades en Stock", value: "—", change: "Error al cargar datos", changeType: "neutral", icon: "inventory" },
+          { title: "SKUs Pronosticados", value: "—", change: "Error al cargar datos", changeType: "neutral", icon: "forecasted" },
+          { title: "Alertas Activas", value: "—", change: "Error al cargar datos", changeType: "neutral", icon: "alerts" },
+        ])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load()
+  }, [])
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {kpis.map((kpi) => (
-        <KpiCard key={kpi.title} {...kpi} />
-      ))}
+      {loading
+        ? Array.from({ length: 4 }).map((_, i) => (
+            <KpiCard
+              key={i}
+              title=""
+              value=""
+              change=""
+              changeType="neutral"
+              icon={["revenue", "inventory", "forecasted", "alerts"][i] as KpiCardProps["icon"]}
+              loading
+            />
+          ))
+        : kpis.map((kpi) => <KpiCard key={kpi.title} {...kpi} />)}
     </div>
   )
 }

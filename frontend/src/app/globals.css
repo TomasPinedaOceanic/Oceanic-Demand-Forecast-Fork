@@ -131,4 +131,8 @@
   body {
     @apply bg-background text-foreground;
   }
+  [data-slot="card-description"],
+  [data-slot="dialog-description"] {
+    font-style: normal;
+  }
 }

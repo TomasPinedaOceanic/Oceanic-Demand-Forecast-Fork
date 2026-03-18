@@ -15,7 +15,7 @@ app = FastAPI(title="Oceanic Demand Forecast API")
 
 origins = [
     "http://localhost:3000",
-    "localhost:3000"
+    "http://127.0.0.1:3000",
 ]
 
 app.add_middleware(
@@ -341,6 +341,27 @@ async def get_predictions(
         raise HTTPException(status_code=500, detail=f"Error fetching predictions: {e}")
 
 # =============================================================================
+# GET /api/sales/range
+# =============================================================================
+
+@app.get(
+    "/api/sales/range",
+    tags=["Sales"],
+    summary="Get the min and max date available in sales data",
+)
+async def get_sales_range(db: Session = Depends(get_db)):
+    from sqlalchemy import func
+    result = db.query(
+        func.min(SalesTransaction.date).label("min_date"),
+        func.max(SalesTransaction.date).label("max_date"),
+    ).first()
+    if not result or result.min_date is None:
+        raise HTTPException(status_code=404, detail="No sales data available")
+    return {
+        "min_date": result.min_date.isoformat(),
+        "max_date": result.max_date.isoformat(),
+    }
+
 # GET /api/sales
 # =============================================================================
 

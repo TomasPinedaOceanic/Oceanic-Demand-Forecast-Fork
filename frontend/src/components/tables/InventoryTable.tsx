@@ -4,19 +4,36 @@ import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Input } from "@/components/ui/input"
-import { StatusBadge } from "@/components/ui/StatusBadge"
-import { skuInventory } from "@/data/inventoryData"
+import { Badge } from "@/components/ui/badge"
 import { Search } from "lucide-react"
+import type { InventoryItem } from "@/lib/api"
 
-export function InventoryTable() {
+function StockStatusBadge({ status }: { status: string }) {
+  if (status === "critical") {
+    return <Badge variant="destructive">Crítico</Badge>
+  }
+  if (status === "low") {
+    return <Badge variant="secondary" className="bg-warning/10 text-warning">Bajo</Badge>
+  }
+  if (status === "ok") {
+    return <Badge variant="secondary" className="bg-success/10 text-success">OK</Badge>
+  }
+  return <Badge variant="outline" className="text-muted-foreground">Pendiente</Badge>
+}
+
+interface InventoryTableProps {
+  items: InventoryItem[]
+}
+
+export function InventoryTable({ items }: InventoryTableProps) {
   const [search, setSearch] = useState("")
 
-  const filtered = skuInventory.filter((item) =>
-    item.sku.toLowerCase().includes(search.toLowerCase())
+  const filtered = items.filter((item) =>
+    item.item_id.toLowerCase().includes(search.toLowerCase())
   )
 
-  const criticalCount = skuInventory.filter((i) => i.status === "critical").length
-  const warningCount = skuInventory.filter((i) => i.status === "warning").length
+  const criticalCount = items.filter((i) => i.stock_status === "critical").length
+  const lowCount = items.filter((i) => i.stock_status === "low").length
 
   return (
     <Card className="bg-card">
@@ -25,7 +42,9 @@ export function InventoryTable() {
           <div>
             <CardTitle className="text-card-foreground">Inventario por SKU</CardTitle>
             <CardDescription>
-              {criticalCount} críticos · {warningCount} en atención · {skuInventory.length} SKUs totales
+              {criticalCount > 0 && `${criticalCount} críticos · `}
+              {lowCount > 0 && `${lowCount} en atención · `}
+              {items.length} SKUs totales
             </CardDescription>
           </div>
           <div className="relative w-full sm:w-56">
@@ -45,36 +64,56 @@ export function InventoryTable() {
             <TableHeader>
               <TableRow>
                 <TableHead>SKU</TableHead>
+                <TableHead className="hidden sm:table-cell">Tienda</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
-                <TableHead className="text-right hidden md:table-cell">Reorden</TableHead>
-                <TableHead className="text-right hidden lg:table-cell">Venta/día</TableHead>
-                <TableHead className="text-right hidden lg:table-cell">Precio</TableHead>
+                <TableHead className="text-right hidden md:table-cell">Disponible</TableHead>
+                <TableHead className="text-right hidden lg:table-cell">Reorden</TableHead>
+                <TableHead className="text-right hidden lg:table-cell">Lead Time</TableHead>
+                <TableHead className="text-right hidden xl:table-cell">Costo Unit.</TableHead>
+                <TableHead className="hidden xl:table-cell">Actualizado</TableHead>
                 <TableHead>Estado</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((item) => (
-                <TableRow key={item.sku}>
-                  <TableCell className="font-mono text-sm text-card-foreground">
-                    {item.sku}
-                  </TableCell>
-                  <TableCell className="text-right font-semibold text-card-foreground">
-                    {item.stock.toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground hidden md:table-cell">
-                    {item.reorderPoint.toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground hidden lg:table-cell">
-                    {item.avgDaily.toFixed(1)}
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground hidden lg:table-cell">
-                    ${item.price.toFixed(2)}
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={item.status} />
+              {filtered.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                    No se encontraron SKUs
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                filtered.map((item) => (
+                  <TableRow key={`${item.item_id}-${item.store_id}`}>
+                    <TableCell className="text-sm font-medium text-card-foreground">
+                      {item.item_id}
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell text-muted-foreground">
+                      {item.store_id ?? "-"}
+                    </TableCell>
+                    <TableCell className="text-right font-semibold text-card-foreground">
+                      {item.current_stock.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground hidden md:table-cell">
+                      {item.available_stock.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground hidden lg:table-cell">
+                      {item.reorder_point != null ? item.reorder_point.toLocaleString() : "-"}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground hidden lg:table-cell">
+                      {item.lead_time_days}d
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground hidden xl:table-cell">
+                      ${item.unit_cost.toFixed(2)}
+                    </TableCell>
+                    <TableCell className="hidden xl:table-cell text-muted-foreground text-sm">
+                      {item.last_updated}
+                    </TableCell>
+                    <TableCell>
+                      <StockStatusBadge status={item.stock_status} />
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </div>

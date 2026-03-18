@@ -20,10 +20,9 @@ import { Button } from "@/components/ui/button"
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/data-ingestion", label: "Ingesta de Datos", icon: Upload },
+  { href: "/predictions", label: "Predicciones", icon: BarChart3 },
   { href: "/inventory", label: "Inventario", icon: Package },
-  { href: "/dashboard", label: "Predicciones", icon: BarChart3, disabled: true },
-  { href: "/dashboard", label: "Configuracion", icon: Settings, disabled: true },
+  { href: "/data-ingestion", label: "Ingesta de Datos", icon: Upload },
 ]
 
 export function AppSidebar() {
@@ -38,18 +37,37 @@ export function AppSidebar() {
         collapsed ? "w-[68px]" : "w-64",
       )}
     >
-      {/* Logo */}
+      {/* Logo + collapse toggle */}
       <div className="flex items-center gap-3 px-4 py-5 border-b border-sidebar-border">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-          <Activity className="h-5 w-5" />
-        </div>
-        {!collapsed && (
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold tracking-tight text-sidebar-foreground">
-              Oceanic Predict
-            </span>
-            <span className="text-xs text-sidebar-foreground/60">Analytics MVP</span>
-          </div>
+        {collapsed ? (
+          <button
+            onClick={() => setCollapsed(false)}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground hover:opacity-80 transition-opacity"
+            title="Expandir"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        ) : (
+          <>
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+              <Activity className="h-5 w-5" />
+            </div>
+            <div className="flex flex-1 flex-col">
+              <span className="text-sm font-semibold tracking-tight text-sidebar-foreground">
+                Oceanic Predict
+              </span>
+              <span className="text-xs text-sidebar-foreground/60">Analytics MVP</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCollapsed(true)}
+              className="h-7 w-7 shrink-0 text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+              title="Colapsar"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+          </>
         )}
       </div>
 
@@ -98,20 +116,22 @@ export function AppSidebar() {
         </ul>
       </nav>
 
-      {/* User section */}
-      <div className="border-t border-sidebar-border px-3 py-4">
-        {!collapsed && user && (
-          <div className="mb-3 flex items-center gap-3 px-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/20 text-sm font-semibold text-sidebar-primary">
-              {user.name.charAt(0).toUpperCase()}
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-sidebar-foreground">{user.name}</span>
-              <span className="text-xs text-sidebar-foreground/50">{user.role}</span>
-            </div>
-          </div>
-        )}
-        <div className="flex flex-col gap-1">
+      {/* Footer: actions + profile */}
+      <div className="border-t border-sidebar-border px-3 py-3">
+        {/* Settings + Logout */}
+        <div className="flex flex-col gap-1 mb-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "justify-start gap-3 text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+              collapsed && "justify-center px-0",
+            )}
+            title={collapsed ? "Configuración" : undefined}
+          >
+            <Settings className="h-4 w-4 shrink-0" />
+            {!collapsed && <span>Configuración</span>}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -120,26 +140,28 @@ export function AppSidebar() {
               "justify-start gap-3 text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
               collapsed && "justify-center px-0",
             )}
+            title={collapsed ? "Cerrar sesión" : undefined}
           >
             <LogOut className="h-4 w-4 shrink-0" />
-            {!collapsed && <span>Cerrar Sesion</span>}
+            {!collapsed && <span>Cerrar sesión</span>}
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCollapsed(!collapsed)}
-            className={cn(
-              "justify-start gap-3 text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-              collapsed && "justify-center px-0",
-            )}
-          >
-            {collapsed ? (
-              <ChevronRight className="h-4 w-4 shrink-0" />
-            ) : (
-              <ChevronLeft className="h-4 w-4 shrink-0" />
-            )}
-            {!collapsed && <span>Colapsar</span>}
-          </Button>
+        </div>
+
+        {/* Profile */}
+        <div className="border-t border-sidebar-border pt-3">
+          {user && (
+            <div className={cn("flex items-center gap-3 px-1", collapsed && "justify-center")}>
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/20 text-sm font-semibold text-sidebar-primary">
+                {user.name.charAt(0).toUpperCase()}
+              </div>
+              {!collapsed && (
+                <div className="flex flex-col truncate">
+                  <span className="text-sm font-medium text-sidebar-foreground truncate">{user.name}</span>
+                  <span className="text-xs text-sidebar-foreground/50 truncate">{user.role}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </aside>

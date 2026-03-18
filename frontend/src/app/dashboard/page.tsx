@@ -5,28 +5,14 @@ import { KpiCardsGrid } from "@/components/kpi-cards"
 import { SalesForecastChart, InventoryChart, CategoryDistributionChart } from "@/components/dashboard-charts"
 import { AlertsTable } from "@/components/alerts-table"
 import { useAuth } from "@/lib/auth-context"
-import { CalendarDays } from "lucide-react"
-
 export default function DashboardPage() {
   const { user } = useAuth()
 
   return (
-    <DashboardLayout>
-      {/* Header */}
-      <div className="mb-8 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground lg:text-3xl">
-            Dashboard de Decisiones
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Bienvenido de nuevo, {user?.name ?? "Usuario"}. Aqui tienes un resumen de tu negocio.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 rounded-lg bg-card px-4 py-2 text-sm text-muted-foreground shadow-sm border">
-          <CalendarDays className="h-4 w-4" />
-          <span>Marzo 2026</span>
-        </div>
-      </div>
+    <DashboardLayout
+      title="Dashboard de Decisiones"
+      subtitle={`Bienvenido de nuevo, ${user?.name ?? "Usuario"}.`}
+    >
 
       {/* KPI Cards */}
       <section aria-label="Indicadores clave" className="mb-8">
