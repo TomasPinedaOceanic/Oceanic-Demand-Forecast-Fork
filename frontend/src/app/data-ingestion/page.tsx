@@ -26,6 +26,8 @@ import {
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 
+import axios from "axios"
+
 interface UploadedFile {
   id: string
   name: string
