@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from "react"
 import {
-  AreaChart,
-  Area,
   BarChart,
   Bar,
   XAxis,
@@ -18,8 +16,8 @@ import {
 } from "recharts"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { getSales, getSalesRange, getPredictions, getInventory } from "@/lib/api"
-import { format, parseISO, subMonths, startOfMonth, endOfMonth } from "date-fns"
+import { getSales, getPredictions, getInventory } from "@/lib/api"
+import { format, parseISO, subMonths, startOfMonth } from "date-fns"
 import { es } from "date-fns/locale"
 
 const COLORS = [
@@ -70,146 +68,87 @@ function ChartSkeleton() {
   )
 }
 
-// ─── Sales Forecast Chart ────────────────────────────────────────────────────
+// ─── Top SKUs by Forecasted Demand ───────────────────────────────────────────
 
-interface SalesPoint {
-  month: string
-  actual: number | null
-  predicted: number | null
+interface TopSkuPoint {
+  sku: string
+  units: number
 }
 
 export function SalesForecastChart() {
-  const [data, setData] = useState<SalesPoint[]>([])
+  const [data, setData] = useState<TopSkuPoint[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    async function load() {
-      try {
-        // Use the latest available date in the dataset as "now"
-        const rangeRes = await getSalesRange().catch(() => null)
-        const anchor = rangeRes ? parseISO(rangeRes.max_date) : new Date()
+    getPredictions()
+      .then((preds) => {
+        if (preds.length === 0) { setData([]); return }
 
-        // Last 6 months of sales relative to anchor
-        const salesFrom = format(startOfMonth(subMonths(anchor, 5)), "yyyy-MM-dd")
-        const salesTo = format(endOfMonth(anchor), "yyyy-MM-dd")
-        // Next 3 months of predictions relative to anchor
-        const predFrom = format(startOfMonth(subMonths(anchor, -1)), "yyyy-MM-dd")
-        const predTo = format(endOfMonth(subMonths(anchor, -3)), "yyyy-MM-dd")
-
-        const [sales, preds] = await Promise.all([
-          getSales({ date_from: salesFrom, date_to: salesTo }),
-          getPredictions({ date_from: predFrom, date_to: predTo }).catch(() => []),
-        ])
-
-        // Aggregate sales by month
-        const salesByMonth: Record<string, number> = {}
-        for (const r of sales) {
-          const key = r.date.slice(0, 7) // "yyyy-MM"
-          salesByMonth[key] = (salesByMonth[key] ?? 0) + r.units_sold * (r.sell_price ?? 0)
-        }
-
-        // Aggregate predictions by month
-        const predByMonth: Record<string, number> = {}
+        // Sum yhat per SKU across all 90 days
+        const totalBySku: Record<string, number> = {}
         for (const r of preds) {
-          const key = r.date.slice(0, 7)
-          predByMonth[key] = (predByMonth[key] ?? 0) + r.yhat
+          totalBySku[r.item_id] = (totalBySku[r.item_id] ?? 0) + r.yhat
         }
 
-        // Build 9-month timeline: 6 historical + 3 forecast relative to anchor
-        const points: SalesPoint[] = []
-        for (let i = 5; i >= 0; i--) {
-          const d = subMonths(anchor, i)
-          const key = format(d, "yyyy-MM")
-          points.push({
-            month: format(d, "MMM", { locale: es }),
-            actual: salesByMonth[key] ?? null,
-            predicted: null,
-          })
-        }
-        for (let i = 1; i <= 3; i++) {
-          const d = subMonths(anchor, -i)
-          const key = format(d, "yyyy-MM")
-          points.push({
-            month: format(d, "MMM", { locale: es }),
-            actual: null,
-            predicted: predByMonth[key] ?? null,
-          })
-        }
+        // Top 5 SKUs sorted descending
+        const top5 = Object.entries(totalBySku)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 5)
+          .map(([sku, units]) => ({ sku, units: Math.round(units) }))
 
-        setData(points)
-      } catch {
-        setData([])
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
+        setData(top5)
+      })
+      .catch(() => setData([]))
+      .finally(() => setLoading(false))
   }, [])
 
   if (loading) return <ChartSkeleton />
 
-  const isEmpty = data.every((d) => d.actual === null && d.predicted === null)
-
   return (
     <Card className="bg-card">
       <CardHeader>
-        <CardTitle className="text-card-foreground">Proyección de Ventas</CardTitle>
-        <CardDescription>Ventas reales vs predicción del modelo</CardDescription>
+        <CardTitle className="text-card-foreground">Top 5 SKUs — Demanda Pronosticada</CardTitle>
+        <CardDescription>Unidades totales pronosticadas en los próximos 90 días</CardDescription>
       </CardHeader>
       <CardContent>
-        {isEmpty ? (
+        {data.length === 0 ? (
           <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
-            Sin datos — sube archivos de ventas y predicciones primero.
+            Sin predicciones — sube un archivo de ventas primero.
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorActual" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={COLORS[0]} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={COLORS[0]} stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="colorPredicted" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={COLORS[1]} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={COLORS[1]} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.91 0.005 247)" />
+            <BarChart
+              data={data}
+              layout="vertical"
+              margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="oklch(0.91 0.005 247)" horizontal={false} />
               <XAxis
-                dataKey="month"
+                type="number"
                 tick={{ fill: "oklch(0.50 0.02 264)", fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
+                tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}K` : String(v)}
               />
               <YAxis
+                type="category"
+                dataKey="sku"
                 tick={{ fill: "oklch(0.50 0.02 264)", fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v: number) => (v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1000 ? `${(v / 1000).toFixed(0)}K` : String(v))}
+                width={110}
               />
-              <Tooltip content={<CustomTooltip />} />
-              <Area
-                type="monotone"
-                dataKey="actual"
-                name="Real"
-                stroke={COLORS[0]}
-                strokeWidth={2}
-                fill="url(#colorActual)"
-                dot={false}
-                connectNulls={false}
+              <Tooltip
+                formatter={(value: number) => [`${value.toLocaleString()} uds`, "Forecast 90d"]}
+                contentStyle={{
+                  backgroundColor: "oklch(1 0 0)",
+                  border: "1px solid oklch(0.91 0.005 247)",
+                  borderRadius: "0.5rem",
+                  fontSize: "12px",
+                }}
               />
-              <Area
-                type="monotone"
-                dataKey="predicted"
-                name="Predicción"
-                stroke={COLORS[1]}
-                strokeWidth={2}
-                strokeDasharray="5 5"
-                fill="url(#colorPredicted)"
-                dot={false}
-                connectNulls={false}
-              />
-            </AreaChart>
+              <Bar dataKey="units" name="Forecast 90d" fill={COLORS[1]} radius={[0, 6, 6, 0]} />
+            </BarChart>
           </ResponsiveContainer>
         )}
       </CardContent>
