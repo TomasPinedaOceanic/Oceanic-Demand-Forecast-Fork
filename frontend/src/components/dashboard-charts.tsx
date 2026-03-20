@@ -17,8 +17,6 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getSales, getPredictions, getInventory } from "@/lib/api"
-import { format, parseISO, subMonths, startOfMonth } from "date-fns"
-import { es } from "date-fns/locale"
 
 const COLORS = [
   "oklch(0.45 0.18 250)",

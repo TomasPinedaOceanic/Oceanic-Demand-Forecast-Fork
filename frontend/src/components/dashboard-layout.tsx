@@ -50,7 +50,7 @@ export function DashboardLayout({ children, title, subtitle }: DashboardLayoutPr
         if (next === "ready" && (prev === "processing" || prev === "uploaded")) {
           setToastDismissed(false)
           setToastVisible(true)
-          // Auto-dismiss after 6s
+          // Auto-dismiss after 10s
           if (autoDismissRef.current) clearTimeout(autoDismissRef.current)
           autoDismissRef.current = setTimeout(() => setToastVisible(false), 10000)
           stopPolling()
@@ -121,7 +121,6 @@ export function DashboardLayout({ children, title, subtitle }: DashboardLayoutPr
               )}
             </div>
             <NotificationBell
-              status={pipelineStatus}
               hasActiveNotification={(pipelineStatus === "processing" || pipelineStatus === "uploaded" || pipelineStatus === "failed") && toastDismissed}
               onClick={() => { setToastDismissed(false); setToastVisible(true) }}
             />

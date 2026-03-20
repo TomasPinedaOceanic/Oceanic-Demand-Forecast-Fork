@@ -50,13 +50,12 @@ import {
   getPredictionsStatus,
   type SaleRecord,
   type PredictionRecord,
-  type PredictionsStatus,
 } from "@/lib/api"
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
 type ViewMode = "aggregated" | "by-sku"
-type Granularity = "daily" | "weekly" | "monthly"
+type Granularity = "daily" | "weekly"
 type PageState = "loading" | "no_data" | "processing" | "ready" | "error"
 
 interface SkuSummaryRow {
@@ -225,7 +224,6 @@ function TrendIcon({ trend }: { trend: "up" | "down" | "flat" }) {
 
 export default function PredictionsPage() {
   const [pageState, setPageState] = useState<PageState>("loading")
-  const [pipelineStatus, setPipelineStatus] = useState<PredictionsStatus | null>(null)
   const [allSales, setAllSales] = useState<SaleRecord[]>([])
   const [allPredictions, setAllPredictions] = useState<PredictionRecord[]>([])
   const [skus, setSkus] = useState<string[]>([])
@@ -238,7 +236,6 @@ export default function PredictionsPage() {
   useEffect(() => {
     getPredictionsStatus()
       .then((status) => {
-        setPipelineStatus(status)
         if (status.status === "no_data") { setPageState("no_data"); return }
         if (status.status === "processing" || status.status === "uploaded") { setPageState("processing"); return }
         if (status.status === "failed") { setErrorMsg(status.message); setPageState("error"); return }
@@ -585,13 +582,13 @@ export default function PredictionsPage() {
                       }}
                       labelStyle={{ color: "hsl(0, 0%, 9%)", fontWeight: 600 }}
                       labelFormatter={(v) => String(v)}
-                      formatter={(value: number | null, name: string) => {
-                        if (value === null || name === "yhat_lower" || name === "band") return [null, null]
+                      formatter={(value, name: string) => {
+                        if (value == null || name === "yhat_lower" || name === "band") return [null, null]
                         const labels: Record<string, string> = {
                           actual: "Ventas Reales",
                           yhat: "Predicción",
                         }
-                        return [Math.round(value).toLocaleString(), labels[name] ?? name]
+                        return [Math.round(Number(value)).toLocaleString(), labels[name] ?? name]
                       }}
                     />
                     <Legend

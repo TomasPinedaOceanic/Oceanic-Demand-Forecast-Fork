@@ -1,10 +1,8 @@
 "use client"
 
 import { Bell } from "lucide-react"
-import type { PredictionsStatus } from "@/lib/api"
 
 interface NotificationBellProps {
-  status: PredictionsStatus["status"]
   hasActiveNotification: boolean
   onClick: () => void
 }
