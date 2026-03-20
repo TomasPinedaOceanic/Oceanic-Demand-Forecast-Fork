@@ -220,24 +220,12 @@ def train_all_skus(data, holidays_df, best_params, cutoff, periods=90):
 
     for sku in skus:
         try:
-            df_sku = prepare_prophet_df(data, sku)
+            df_sku   = prepare_prophet_df(data, sku)
             df_train = df_sku[df_sku['ds'] <= cutoff].copy()
             df_test  = df_sku[df_sku['ds'] >  cutoff].copy()
 
             model    = train_prophet(df_train, holidays_df, best_params)
             forecast = forecast_prophet(model, df_sku, periods)
-
-            mae, rmse, mae_rel = evaluate(forecast, df_test)
-
-            resultados.append({
-                'item_id': sku,
-                'cat_id': data[data['item_id'] == sku]['cat_id'].iloc[0],
-                'dept_id': data[data['item_id'] == sku]['dept_id'].iloc[0],
-                'mae': round(mae, 2),
-                'rmse': round(rmse, 2),
-                'avg_sales_test': round(df_test['y'].mean(), 2),
-                'mae_relative_%': round(mae_rel, 1)
-            })
 
             forecasts[sku] = {
                 'forecast': forecast,
@@ -246,12 +234,28 @@ def train_all_skus(data, holidays_df, best_params, cutoff, periods=90):
                 'df_full': df_sku
             }
 
-            print(f"  ✓ {sku:<20} MAE: {mae:6.2f} | MAE rel: {mae_rel:6.1f}%")
+            # Only evaluate if there is test data (tuning mode); skip in production mode
+            if len(df_test) > 0:
+                mae, rmse, mae_rel = evaluate(forecast, df_test)
+                resultados.append({
+                    'item_id': sku,
+                    'cat_id': data[data['item_id'] == sku]['cat_id'].iloc[0],
+                    'dept_id': data[data['item_id'] == sku]['dept_id'].iloc[0],
+                    'mae': round(mae, 2),
+                    'rmse': round(rmse, 2),
+                    'avg_sales_test': round(df_test['y'].mean(), 2),
+                    'mae_relative_%': round(mae_rel, 1)
+                })
+                print(f"  ✓ {sku:<20} MAE: {mae:6.2f} | MAE rel: {mae_rel:6.1f}%")
+            else:
+                print(f"  ✓ {sku:<20} (production mode — no test data)")
 
         except Exception as e:
             print(f"  ✗ {sku} — {e}")
 
-    df_metrics = pd.DataFrame(resultados).sort_values('mae_relative_%')
+    df_metrics = pd.DataFrame(resultados) if resultados else pd.DataFrame()
+    if not df_metrics.empty and 'mae_relative_%' in df_metrics.columns:
+        df_metrics = df_metrics.sort_values('mae_relative_%')
     return df_metrics, forecasts
 
 # =============================================================================
@@ -419,32 +423,40 @@ def run_pipeline(df: pd.DataFrame, company_id: int = 1):
     """
     Runs the full Prophet demand forecasting pipeline.
     Called from POST /upload-sales as a background task.
+    Trains on ALL historical data and forecasts the next 90 days.
     """
-    CUTOFF_DAYS   = 90
+    CUTOFF_DAYS   = 90   # used only for pilot hyperparameter tuning
     FORECAST_DAYS = 90
 
     holidays_df = build_holidays(df)
-    cutoff = df['date'].max() - pd.Timedelta(days=CUTOFF_DAYS)
 
-    # Pilot SKU tuning
+    # Use a tuning cutoff only for hyperparameter search (pilot SKU)
+    # The actual training uses all available data
+    tuning_cutoff = df['date'].max() - pd.Timedelta(days=CUTOFF_DAYS)
+    full_cutoff   = df['date'].max()  # train on everything
+
+    # Pilot SKU tuning (uses tuning_cutoff to have test data for CV)
     pilot_sku      = df.groupby('item_id')['units_sold'].sum().idxmax()
     df_pilot       = prepare_prophet_df(df, pilot_sku)
-    df_pilot_train = df_pilot[df_pilot['ds'] <= cutoff]
+    df_pilot_train = df_pilot[df_pilot['ds'] <= tuning_cutoff]
 
     best_params = hyperparameter_tuning(df_pilot_train, holidays_df)
 
-    # Train all SKUs
+    # Train all SKUs on full data → forecast next 90 days
     df_metrics, forecasts = train_all_skus(df, holidays_df,
-                                           best_params, cutoff, FORECAST_DAYS)
+                                           best_params, full_cutoff, FORECAST_DAYS)
 
     # Save predictions to database
     save_predictions_to_db(forecasts, company_id=company_id)
 
     print("\n── Pipeline completed ───────────────────────────────────────")
-    df_valid = df_metrics[df_metrics['avg_sales_test'] >= 5]
-    print(f"  SKUs trained:              {len(df_metrics)}")
-    print(f"  SKUs with demand ≥5/day:   {len(df_valid)}")
-    print(f"  Avg MAE relative:          {df_valid['mae_relative_%'].mean():.1f}%")
+    print(f"  SKUs trained:              {len(forecasts)}")
+    if not df_metrics.empty and 'mae_relative_%' in df_metrics.columns:
+        df_valid = df_metrics[df_metrics['avg_sales_test'] >= 5]
+        print(f"  SKUs with demand ≥5/day:   {len(df_valid)}")
+        print(f"  Avg MAE relative:          {df_valid['mae_relative_%'].mean():.1f}%")
+    else:
+        print("  (production mode — metrics not computed)")
     print("────────────────────────────────────────────────────────────")
 
 
