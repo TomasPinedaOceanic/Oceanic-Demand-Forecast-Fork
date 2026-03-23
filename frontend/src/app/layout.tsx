@@ -10,23 +10,8 @@ const _spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-spac
 export const metadata: Metadata = {
   title: 'Oceanic Predict - MVP Predictor de Demanda',
   description: 'Plataforma de analitica avanzada para PYMES. Transforma datos operativos en activos estrategicos predictivos.',
-  generator: 'v0.app',
   icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-    apple: '/apple-icon.png',
+    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
   },
 }
 
