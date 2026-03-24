@@ -11,3 +11,6 @@ numpy
 matplotlib
 prophet
 scikit-learn
+flake8
+black
+nbqa
