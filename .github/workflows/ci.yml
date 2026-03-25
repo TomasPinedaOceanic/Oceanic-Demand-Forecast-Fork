@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, fullstack-v1]
+
+jobs:
+  # ─── Backend ────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend — install & syntax check
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: oceanic
+          POSTGRES_PASSWORD: oceanic
+          POSTGRES_DB: oceanic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://oceanic:oceanic@localhost:5432/oceanic
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Check Python syntax (compile all files)
+        working-directory: backend
+        run: python -m compileall . -q
+
+      - name: Initialize database tables
+        working-directory: backend
+        run: python -m database.database
+
+      - name: Verify API module loads without errors
+        working-directory: backend
+        run: python -c "from api.main import app; print('API loaded OK')"
+
+  # ─── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend — install & build check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/src/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend/src
+        run: npm ci
+
+      - name: Build Next.js app
+        working-directory: frontend/src
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000

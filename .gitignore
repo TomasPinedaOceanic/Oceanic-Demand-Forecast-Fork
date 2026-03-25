@@ -5,3 +5,4 @@ venv/
 *.ipynb
 api/artifacts/
 .DS_Store
+node_modules/
