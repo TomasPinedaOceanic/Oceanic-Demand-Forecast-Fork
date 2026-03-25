@@ -4,4 +4,5 @@ __pycache__/
 venv/
 *.ipynb
 api/artifacts/
-.DS_Store.DS_Store
+.DS_Store
+node_modules/
