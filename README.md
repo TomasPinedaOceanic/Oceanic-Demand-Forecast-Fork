@@ -157,10 +157,3 @@ App available at `http://localhost:3000`
 | `unit_cost` | Yes | Float |
 | `inventory_available` | No | Integer |
 | `reorder_quantity` | No | Integer |
-
----
-
-
-**Expected runtime:** 5–10 minutes depending on number of SKUs and dataset size.
-
----
