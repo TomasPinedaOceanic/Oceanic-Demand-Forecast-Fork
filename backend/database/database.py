@@ -36,8 +36,25 @@ SessionLocal = sessionmaker(bind=engine)
 from . import models
 
 def init_db() -> None:
-    """Creates all tables defined in models if they do not already exist."""
+    """Creates all tables defined in models if they do not already exist.
+
+    Also creates functional unique indexes for upsert support (US-09).
+    These use COALESCE(store_id, '') to handle NULL store_id correctly,
+    since PostgreSQL treats NULL != NULL in standard UNIQUE constraints.
+    """
     Base.metadata.create_all(bind=engine)
+
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_sales_transaction_key
+            ON sales_transaction (company_id, item_id, COALESCE(store_id, ''), date)
+        """))
+        conn.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_inventory_snapshot_key
+            ON inventory_snapshot (company_id, item_id, COALESCE(store_id, ''), date)
+        """))
+        conn.commit()
+
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     print("Tables detected in the database:")
