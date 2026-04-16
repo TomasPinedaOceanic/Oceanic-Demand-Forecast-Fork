@@ -1,8 +1,10 @@
+import json
 import pandas as pd
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from api.validation import validate_sales_dataframe, validate_inventory_dataframe
@@ -108,29 +110,42 @@ async def upload_sales(
         db.commit()
         db.refresh(data_source)
 
-        # Step 4: Delete existing sales transactions for this company
-        db.query(SalesTransaction).filter(SalesTransaction.company_id == company_id).delete()
-        db.commit()
-
-        # Step 5: Save rows to sales_transaction table
-        transactions = [
-            SalesTransaction(
-                company_id=company_id,
-                item_id=str(row["item_id"]).strip(),
-                store_id=str(row["store_id"]).strip() if pd.notna(row.get("store_id")) else None,
-                cat_id=str(row["cat_id"]).strip() if pd.notna(row.get("cat_id")) else None,
-                dept_id=str(row["dept_id"]).strip() if pd.notna(row.get("dept_id")) else None,
-                date=row["date"].date(),
-                units_sold=int(row["units_sold"]),
-                sell_price=float(row["sell_price"]) if pd.notna(row.get("sell_price")) else None,
-                holiday_promotion=int(row["holiday_promotion"]) if pd.notna(row.get("holiday_promotion")) else None,
-                event_name_1=str(row["event_name_1"]).strip() if pd.notna(row.get("event_name_1")) else None,
-            )
+        # Step 4: Upsert rows into sales_transaction table
+        records = [
+            {
+                "company_id": company_id,
+                "item_id": str(row["item_id"]).strip(),
+                "store_id": str(row["store_id"]).strip() if pd.notna(row.get("store_id")) else None,
+                "cat_id": str(row["cat_id"]).strip() if pd.notna(row.get("cat_id")) else None,
+                "dept_id": str(row["dept_id"]).strip() if pd.notna(row.get("dept_id")) else None,
+                "date": row["date"].date(),
+                "units_sold": int(row["units_sold"]),
+                "sell_price": float(row["sell_price"]) if pd.notna(row.get("sell_price")) else None,
+                "holiday_promotion": int(row["holiday_promotion"]) if pd.notna(row.get("holiday_promotion")) else None,
+                "event_name_1": str(row["event_name_1"]).strip() if pd.notna(row.get("event_name_1")) else None,
+            }
             for _, row in dataframe.iterrows()
         ]
 
-        db.bulk_save_objects(transactions)
+        upsert_sql = text("""
+            INSERT INTO sales_transaction
+                (company_id, item_id, store_id, cat_id, dept_id, date,
+                 units_sold, sell_price, holiday_promotion, event_name_1)
+            VALUES
+                (:company_id, :item_id, :store_id, :cat_id, :dept_id, :date,
+                 :units_sold, :sell_price, :holiday_promotion, :event_name_1)
+            ON CONFLICT (company_id, item_id, COALESCE(store_id, ''), date)
+            DO UPDATE SET
+                units_sold = EXCLUDED.units_sold,
+                sell_price = EXCLUDED.sell_price,
+                cat_id = EXCLUDED.cat_id,
+                dept_id = EXCLUDED.dept_id,
+                holiday_promotion = EXCLUDED.holiday_promotion,
+                event_name_1 = EXCLUDED.event_name_1
+        """)
+        db.execute(upsert_sql, records)
         db.commit()
+        transactions = records
 
         # Step 6: Trigger Prophet pipeline in background
         background_tasks.add_task(
@@ -153,7 +168,7 @@ async def upload_sales(
         "status": "processing",
         "message": "File uploaded successfully. Demand forecast is being generated in the background.",
         "columns": [str(col) for col in dataframe.columns],
-        "preview": dataframe.head(5).where(dataframe.notna(), other=None).to_dict(orient="records"),
+        "preview": json.loads(dataframe.head(5).to_json(orient="records", date_format="iso")),
         "validation": {
             "warnings": result.warnings,
             "issues_preview": result.issues[:20],
@@ -196,28 +211,42 @@ async def upload_inventory(
         result = validate_inventory_dataframe(dataframe)
         dataframe = result.cleaned
 
-        # Step 3: Delete existing snapshots for this company before inserting new ones
-        db.query(InventorySnapshot).filter(InventorySnapshot.company_id == company_id).delete()
-        db.commit()
-
-        # Step 4: Save to inventory_snapshot table
-        snapshots = [
-            InventorySnapshot(
-                company_id=company_id,
-                date=row["date"].date(),
-                item_id=str(row["item_id"]).strip(),
-                store_id=str(row["store_id"]).strip() if pd.notna(row.get("store_id")) else None,
-                inventory_on_hand=int(row["inventory_on_hand"]),
-                inventory_available=int(row["inventory_available"]) if pd.notna(row["inventory_available"]) else None,
-                lead_time_days=int(row["lead_time_days"]),
-                unit_cost=float(row["unit_cost"]),
-                reorder_quantity=int(row["reorder_quantity"]) if pd.notna(row.get("reorder_quantity")) else None,
-            )
+        # Step 3: Upsert rows into inventory_snapshot table
+        inv_records = [
+            {
+                "company_id": company_id,
+                "date": row["date"].date(),
+                "item_id": str(row["item_id"]).strip(),
+                "store_id": str(row["store_id"]).strip() if pd.notna(row.get("store_id")) else None,
+                "inventory_on_hand": int(row["inventory_on_hand"]),
+                "inventory_available": int(row["inventory_available"]) if pd.notna(row["inventory_available"]) else None,
+                "lead_time_days": int(row["lead_time_days"]),
+                "unit_cost": float(row["unit_cost"]),
+                "reorder_quantity": int(row["reorder_quantity"]) if pd.notna(row.get("reorder_quantity")) else None,
+            }
             for _, row in dataframe.iterrows()
         ]
 
-        db.bulk_save_objects(snapshots)
+        inv_upsert_sql = text("""
+            INSERT INTO inventory_snapshot
+                (company_id, item_id, store_id, date,
+                 inventory_on_hand, inventory_available, lead_time_days,
+                 unit_cost, reorder_quantity)
+            VALUES
+                (:company_id, :item_id, :store_id, :date,
+                 :inventory_on_hand, :inventory_available, :lead_time_days,
+                 :unit_cost, :reorder_quantity)
+            ON CONFLICT (company_id, item_id, COALESCE(store_id, ''), date)
+            DO UPDATE SET
+                inventory_on_hand = EXCLUDED.inventory_on_hand,
+                inventory_available = EXCLUDED.inventory_available,
+                lead_time_days = EXCLUDED.lead_time_days,
+                unit_cost = EXCLUDED.unit_cost,
+                reorder_quantity = EXCLUDED.reorder_quantity
+        """)
+        db.execute(inv_upsert_sql, inv_records)
         db.commit()
+        snapshots = inv_records
 
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -229,7 +258,7 @@ async def upload_inventory(
         "rows_saved": len(snapshots),
         "company_id": company_id,
         "skus": dataframe["item_id"].tolist(),
-        "preview": dataframe.head(5).where(dataframe.notna(), other=None).to_dict(orient="records"),
+        "preview": json.loads(dataframe.head(5).to_json(orient="records", date_format="iso")),
         "validation": {
             "warnings": result.warnings,
             "issues_preview": result.issues[:20],
