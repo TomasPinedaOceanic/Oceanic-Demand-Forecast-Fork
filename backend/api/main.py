@@ -1,6 +1,7 @@
 import json
 import logging
 import pandas as pd
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +14,18 @@ from sqlalchemy.orm import Session
 from api.validation import validate_sales_dataframe, validate_inventory_dataframe
 from demand_forecast.prophet_demand_forecast import run_pipeline
 
-from database.database import get_db, SessionLocal
+from database.database import get_db, SessionLocal, init_db
 from database.models import Company, DataSource, SalesTransaction, Prediction, InventorySnapshot
 
-app = FastAPI(title="Oceanic Demand Forecast API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run startup tasks before the API begins serving requests."""
+    init_db()
+    yield
+
+
+app = FastAPI(title="Oceanic Demand Forecast API", lifespan=lifespan)
 
 origins = [
     "http://localhost:3000",
