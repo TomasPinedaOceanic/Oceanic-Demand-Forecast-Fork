@@ -541,6 +541,7 @@ async def get_inventory(db: Session = Depends(get_db)):
                     "stock_status": a.stock_status if a else "pending",
                     "reorder_point": float(a.reorder_point) if a and a.reorder_point is not None else None,
                     "next_month_forecast": float(a.units_needed_next_month) if a and a.units_needed_next_month is not None else 0,
+                    "stock_status": _compute_stock_status(s, forecast_by_sku_inv),
                     "slow_moving_flag": a.slow_moving_flag if a else None,
                     "immobilized_capital": float(a.immobilized_capital) if a and a.immobilized_capital is not None else None,
                     "days_of_stock": float(a.days_of_stock) if a and a.days_of_stock is not None else None,
@@ -553,6 +554,197 @@ async def get_inventory(db: Session = Depends(get_db)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching inventory: {e}")
+
+
+    # =============================================================================
+# GET /api/inventory
+# =============================================================================
+
+@app.get(
+    "/api/inventory",
+    tags=["Inventory"],
+    summary="Get current inventory by SKU",
+    description="Returns current stock levels per SKU from the latest inventory snapshot.",
+)
+async def get_inventory(db: Session = Depends(get_db)):
+    try:
+        from sqlalchemy import func
+        from datetime import date, timedelta
+
+        snapshots = (
+            db.query(InventorySnapshot)
+            .order_by(InventorySnapshot.item_id)
+            .all()
+        )
+
+        if not snapshots:
+            raise HTTPException(status_code=404, detail="No inventory data found. Please upload an inventory file first.")
+
+        # Get predictions for the next 30 days to compute next_month_forecast
+        company = db.query(Company).order_by(Company.id.asc()).first()
+        forecast_by_sku: dict[str, float] = {}
+        if company:
+            today = date.today()
+            month_end = today + timedelta(days=30)
+            preds = (
+                db.query(Prediction)
+                .filter(
+                    Prediction.company_id == company.id,
+                    Prediction.forecast_date >= today,
+                    Prediction.forecast_date <= month_end,
+                )
+                .all()
+            )
+            for p in preds:
+                forecast_by_sku[p.item_id] = forecast_by_sku.get(p.item_id, 0) + float(p.predicted_demand)
+
+        def compute_status(snap: InventorySnapshot) -> str:
+            available = snap.inventory_available if snap.inventory_available is not None else snap.inventory_on_hand
+            monthly = forecast_by_sku.get(snap.item_id, 0)
+            if monthly <= 0:
+                return "ok"
+            avg_daily = monthly / 30
+            demand_lead = avg_daily * snap.lead_time_days
+            if available <= demand_lead:
+                return "critical"
+            if available <= demand_lead * 1.5:
+                return "low"
+            return "ok"
+
+        return {
+            "items": [
+                {
+                    "item_id": s.item_id,
+                    "store_id": s.store_id,
+                    "current_stock": s.inventory_on_hand,
+                    "available_stock": s.inventory_available if s.inventory_available is not None else s.inventory_on_hand,
+                    "lead_time_days": s.lead_time_days,
+                    "unit_cost": float(s.unit_cost),
+                    "next_month_forecast": round(forecast_by_sku.get(s.item_id, 0), 1),
+                    "stock_status": compute_status(s),
+                    "last_updated": s.date.isoformat(),
+                }
+                for s in snapshots
+            ]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching inventory: {e}")
+
+
+# =============================================================================
+# GET /api/inventory/alerts
+# =============================================================================
+
+@app.get(
+    "/api/inventory/alerts",
+    tags=["Inventory"],
+    summary="Get stockout risk alerts per SKU",
+    description="Identifies SKUs where projected demand exceeds available inventory within the lead time window.",
+)
+async def get_inventory_alerts(db: Session = Depends(get_db)):
+    try:
+        company = db.query(Company).order_by(Company.id.asc()).first()
+        if not company:
+            return {"alerts": []}
+
+        # Get latest inventory snapshot per SKU
+        from sqlalchemy import func
+        latest_dates = (
+            db.query(
+                InventorySnapshot.item_id,
+                func.max(InventorySnapshot.date).label("max_date"),
+            )
+            .filter(InventorySnapshot.company_id == company.id)
+            .group_by(InventorySnapshot.item_id)
+            .subquery()
+        )
+
+        snapshots = (
+            db.query(InventorySnapshot)
+            .join(
+                latest_dates,
+                (InventorySnapshot.item_id == latest_dates.c.item_id)
+                & (InventorySnapshot.date == latest_dates.c.max_date),
+            )
+            .all()
+        )
+
+        if not snapshots:
+            return {"alerts": []}
+
+        # Get next 90 days of predictions per SKU
+        from datetime import date, timedelta
+        today = date.today()
+        forecast_end = today + timedelta(days=90)
+
+        predictions = (
+            db.query(Prediction)
+            .filter(
+                Prediction.company_id == company.id,
+                Prediction.forecast_date >= today,
+                Prediction.forecast_date <= forecast_end,
+            )
+            .all()
+        )
+
+        # Build dict: item_id → list of predicted_demand values
+        forecast_by_sku: dict[str, list[float]] = {}
+        for p in predictions:
+            forecast_by_sku.setdefault(p.item_id, []).append(float(p.predicted_demand))
+
+        alerts = []
+        for snap in snapshots:
+            demands = forecast_by_sku.get(snap.item_id, [])
+            available = snap.inventory_available if snap.inventory_available is not None else snap.inventory_on_hand
+            lead_time = snap.lead_time_days
+
+            if not demands:
+                # No forecast available for this SKU — skip
+                continue
+
+            avg_daily_demand = sum(demands) / len(demands)
+
+            if avg_daily_demand <= 0:
+                continue
+
+            days_of_stock = available / avg_daily_demand
+            demand_during_lead_time = avg_daily_demand * lead_time
+
+            # Determine stock status
+            if available <= demand_during_lead_time:
+                stock_status = "critical"
+            elif available <= demand_during_lead_time * 1.5:
+                stock_status = "low"
+            else:
+                stock_status = "ok"
+
+            if stock_status in ("critical", "low"):
+                stockout_date = today + timedelta(days=int(days_of_stock))
+                alerts.append({
+                    "item_id": snap.item_id,
+                    "store_id": snap.store_id,
+                    "current_stock": available,
+                    "lead_time_days": lead_time,
+                    "avg_daily_demand": round(avg_daily_demand, 2),
+                    "demand_during_lead_time": round(demand_during_lead_time, 2),
+                    "days_of_stock": round(days_of_stock, 1),
+                    "stockout_date": stockout_date.isoformat(),
+                    "stock_status": stock_status,
+                })
+
+        # Sort by urgency: critical first, then by days_of_stock ascending
+        alerts.sort(key=lambda x: (0 if x["stock_status"] == "critical" else 1, x["days_of_stock"]))
+
+        return {"alerts": alerts}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating stockout alerts: {e}")
+
+
+
 
 # =============================================================================
 # Helpers
