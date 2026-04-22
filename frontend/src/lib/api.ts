@@ -130,4 +130,26 @@ export function getPredictionsStatus(): Promise<PredictionsStatus> {
   return api.get<PredictionsStatus>("/api/predictions/status").then((r) => r.data)
 }
 
+export interface StockoutAlert {
+  item_id: string
+  store_id: string | null
+  current_stock: number
+  lead_time_days: number
+  avg_daily_demand: number
+  demand_during_lead_time: number
+  days_of_stock: number
+  stockout_date: string
+  stock_status: "critical" | "low"
+}
+
+export interface AlertsResponse {
+  alerts: StockoutAlert[]
+}
+
+export function getInventoryAlerts(): Promise<AlertsResponse> {
+  return api.get<AlertsResponse>("/api/inventory/alerts").then((r) => r.data)
+}
+
+
+
 export default api
