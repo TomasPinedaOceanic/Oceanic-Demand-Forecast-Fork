@@ -157,7 +157,7 @@ def run_inventory_analysis(company_id: int, db: Session) -> None:
         if total_units_sold is None and avg_daily_forecast is None:
             stock_status = "pending"
         elif slow_moving_flag:
-            stock_status = "low"
+            stock_status = "slow_moving"
         else:
             stock_status = "ok"
 
