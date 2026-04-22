@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Search, AlertTriangle, TrendingDown, CheckCircle2 } from "lucide-react"
+import { Search, AlertTriangle, TrendingDown, CheckCircle2, Skull } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { InventoryItem } from "@/lib/api"
 
@@ -24,6 +24,14 @@ function StockStatusBadge({ item }: { item: InventoryItem }) {
       <Badge variant="destructive" className="gap-1">
         <AlertTriangle className="h-3 w-3" />
         Reordenar
+      </Badge>
+    )
+  }
+  if (item.stock_status === "dead_stock") {
+    return (
+      <Badge variant="secondary" className="gap-1 bg-destructive/10 text-destructive">
+        <Skull className="h-3 w-3" />
+        Stock Muerto
       </Badge>
     )
   }
@@ -68,19 +76,20 @@ function ReorderCell({ item }: { item: InventoryItem }) {
 // Filter tabs
 // ---------------------------------------------------------------------------
 
-type FilterType = "all" | "reorder" | "slow"
+type FilterType = "all" | "reorder" | "slow" | "dead"
 
 interface FilterTabProps {
   active: FilterType
-  counts: { all: number; reorder: number; slow: number }
+  counts: { all: number; reorder: number; slow: number; dead: number }
   onChange: (f: FilterType) => void
 }
 
 function FilterTabs({ active, counts, onChange }: FilterTabProps) {
   const tabs: { key: FilterType; label: string; count: number }[] = [
-    { key: "all",    label: "Todos",          count: counts.all    },
-    { key: "reorder",label: "Por Reordenar",  count: counts.reorder},
-    { key: "slow",   label: "Movimiento Lento", count: counts.slow   },
+    { key: "all",    label: "Todos",           count: counts.all    },
+    { key: "reorder",label: "Por Reordenar",   count: counts.reorder},
+    { key: "slow",   label: "Movimiento Lento",count: counts.slow   },
+    { key: "dead",   label: "Stock Muerto",    count: counts.dead   },
   ]
 
   return (
@@ -103,6 +112,8 @@ function FilterTabs({ active, counts, onChange }: FilterTabProps) {
                 ? "bg-destructive/10 text-destructive"
                 : tab.key === "slow" && tab.count > 0
                 ? "bg-warning/10 text-warning"
+                : tab.key === "dead" && tab.count > 0
+                ? "bg-destructive/10 text-destructive"
                 : "bg-muted text-muted-foreground"
             )}
           >
@@ -127,19 +138,22 @@ export function InventoryTable({ items }: InventoryTableProps) {
   const [filter, setFilter]   = useState<FilterType>("all")
 
   const reorderItems  = items.filter(isBelowReorder)
-  const slowItems     = items.filter((i) => i.slow_moving_flag === true)
+  const slowItems     = items.filter((i) => i.slow_moving_flag === true && i.stock_status !== "dead_stock")
+  const deadItems     = items.filter((i) => i.stock_status === "dead_stock")
 
   const counts = {
     all:     items.length,
     reorder: reorderItems.length,
     slow:    slowItems.length,
+    dead:    deadItems.length,
   }
 
   const filtered = items
     .filter((i) => i.item_id.toLowerCase().includes(search.toLowerCase()))
     .filter((i) => {
       if (filter === "reorder") return isBelowReorder(i)
-      if (filter === "slow")    return i.slow_moving_flag === true
+      if (filter === "slow")    return i.slow_moving_flag === true && i.stock_status !== "dead_stock"
+      if (filter === "dead")    return i.stock_status === "dead_stock"
       return true
     })
 
@@ -159,6 +173,11 @@ export function InventoryTable({ items }: InventoryTableProps) {
                 {slowItems.length > 0 && (
                   <span className="text-warning font-medium">
                     {slowItems.length} mov. lento ·{" "}
+                  </span>
+                )}
+                {deadItems.length > 0 && (
+                  <span className="text-destructive font-medium">
+                    {deadItems.length} stock muerto ·{" "}
                   </span>
                 )}
                 {items.length} SKUs totales
@@ -211,6 +230,8 @@ export function InventoryTable({ items }: InventoryTableProps) {
                       "transition-colors",
                       isBelowReorder(item)
                         ? "border-l-2 border-l-destructive bg-destructive/5 hover:bg-destructive/10"
+                        : item.stock_status === "dead_stock"
+                        ? "border-l-2 border-l-destructive/50 bg-destructive/5 hover:bg-destructive/10"
                         : item.slow_moving_flag === true
                         ? "border-l-2 border-l-warning bg-warning/5 hover:bg-warning/10"
                         : "hover:bg-muted/40"
