@@ -508,12 +508,11 @@ async def get_sales(
     "/api/inventory",
     tags=["Inventory"],
     summary="Get current inventory by SKU",
-    description="Returns current stock levels per SKU from the latest inventory snapshot.",
+    description="Returns current stock levels per SKU joined with pre-computed analysis (reorder point, slow-moving, immobilized capital).",
 )
 async def get_inventory(db: Session = Depends(get_db)):
     try:
-        from sqlalchemy import func
-        from datetime import date, timedelta
+        from sqlalchemy.orm import aliased
 
         snapshots = (
             db.query(InventorySnapshot)
@@ -524,36 +523,16 @@ async def get_inventory(db: Session = Depends(get_db)):
         if not snapshots:
             raise HTTPException(status_code=404, detail="No inventory data found. Please upload an inventory file first.")
 
-        # Get predictions for the next 30 days to compute next_month_forecast
-        company = db.query(Company).order_by(Company.id.asc()).first()
-        forecast_by_sku: dict[str, float] = {}
-        if company:
-            today = date.today()
-            month_end = today + timedelta(days=30)
-            preds = (
-                db.query(Prediction)
-                .filter(
-                    Prediction.company_id == company.id,
-                    Prediction.forecast_date >= today,
-                    Prediction.forecast_date <= month_end,
-                )
-                .all()
-            )
-            for p in preds:
-                forecast_by_sku[p.item_id] = forecast_by_sku.get(p.item_id, 0) + float(p.predicted_demand)
-
-        def compute_status(snap: InventorySnapshot) -> str:
-            available = snap.inventory_available if snap.inventory_available is not None else snap.inventory_on_hand
-            monthly = forecast_by_sku.get(snap.item_id, 0)
-            if monthly <= 0:
-                return "ok"
-            avg_daily = monthly / 30
-            demand_lead = avg_daily * snap.lead_time_days
-            if available <= demand_lead:
-                return "critical"
-            if available <= demand_lead * 1.5:
-                return "low"
-            return "ok"
+        # Build analysis lookup: inventory_snapshot_id → InventoryAnalysis row
+        snapshot_ids = [s.id for s in snapshots]
+        analyses = (
+            db.query(InventoryAnalysis)
+            .filter(InventoryAnalysis.inventory_snapshot_id.in_(snapshot_ids))
+            .all()
+        )
+        analysis_by_snapshot: dict[int, InventoryAnalysis] = {
+            a.inventory_snapshot_id: a for a in analyses
+        }
 
         return {
             "items": [
@@ -561,12 +540,45 @@ async def get_inventory(db: Session = Depends(get_db)):
                     "item_id": s.item_id,
                     "store_id": s.store_id,
                     "current_stock": s.inventory_on_hand,
-                    "available_stock": s.inventory_available if s.inventory_available is not None else s.inventory_on_hand,
+                    "available_stock": (
+                        s.inventory_available if s.inventory_available is not None
+                        else s.inventory_on_hand
+                    ),
                     "lead_time_days": s.lead_time_days,
                     "unit_cost": float(s.unit_cost),
-                    "next_month_forecast": round(forecast_by_sku.get(s.item_id, 0), 1),
-                    "stock_status": compute_status(s),
+                    "next_month_forecast": (
+                        float(analysis_by_snapshot[s.id].units_needed_next_month)
+                        if s.id in analysis_by_snapshot
+                        and analysis_by_snapshot[s.id].units_needed_next_month is not None
+                        else 0.0
+                    ),
+                    "stock_status": (
+                        analysis_by_snapshot[s.id].stock_status
+                        if s.id in analysis_by_snapshot else "pending"
+                    ),
                     "last_updated": s.date.isoformat(),
+                    "reorder_point": (
+                        float(analysis_by_snapshot[s.id].reorder_point)
+                        if s.id in analysis_by_snapshot
+                        and analysis_by_snapshot[s.id].reorder_point is not None
+                        else None
+                    ),
+                    "slow_moving_flag": (
+                        analysis_by_snapshot[s.id].slow_moving_flag
+                        if s.id in analysis_by_snapshot else None
+                    ),
+                    "immobilized_capital": (
+                        float(analysis_by_snapshot[s.id].immobilized_capital)
+                        if s.id in analysis_by_snapshot
+                        and analysis_by_snapshot[s.id].immobilized_capital is not None
+                        else None
+                    ),
+                    "days_of_stock": (
+                        float(analysis_by_snapshot[s.id].days_of_stock)
+                        if s.id in analysis_by_snapshot
+                        and analysis_by_snapshot[s.id].days_of_stock is not None
+                        else None
+                    ),
                 }
                 for s in snapshots
             ]
@@ -620,15 +632,25 @@ async def get_inventory_alerts(db: Session = Depends(get_db)):
             return {"alerts": []}
 
         # Get next 90 days of predictions per SKU
-        from datetime import date, timedelta
-        today = date.today()
-        forecast_end = today + timedelta(days=90)
+        # Anchor to data timeline (not date.today()) so historical CSVs work correctly
+        from datetime import timedelta
+        from sqlalchemy import func as sqlfunc
+        min_forecast_date = (
+            db.query(sqlfunc.min(Prediction.forecast_date))
+            .filter(Prediction.company_id == company.id)
+            .scalar()
+        )
+        if not min_forecast_date:
+            return {"alerts": []}
+
+        forecast_start = min_forecast_date
+        forecast_end   = min_forecast_date + timedelta(days=90)
 
         predictions = (
             db.query(Prediction)
             .filter(
                 Prediction.company_id == company.id,
-                Prediction.forecast_date >= today,
+                Prediction.forecast_date >= forecast_start,
                 Prediction.forecast_date <= forecast_end,
             )
             .all()
@@ -666,7 +688,7 @@ async def get_inventory_alerts(db: Session = Depends(get_db)):
                 stock_status = "ok"
 
             if stock_status in ("critical", "low"):
-                stockout_date = today + timedelta(days=int(days_of_stock))
+                stockout_date = forecast_start + timedelta(days=int(days_of_stock))
                 alerts.append({
                     "item_id": snap.item_id,
                     "store_id": snap.store_id,

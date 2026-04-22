@@ -8,8 +8,9 @@ from database.models import InventoryAnalysis, InventorySnapshot, Prediction, Sa
 # ---------------------------------------------------------------------------
 # Thresholds - Se pueden ajustar segun contexto o analisis
 # ---------------------------------------------------------------------------
-SLOW_MOVING_DAYS = 365       # historical window for turnover calculation
-SLOW_MOVING_THRESHOLD = 1.0  # turnover ratio below this flags a SKU as slow-moving
+SLOW_MOVING_DAYS = 365          # historical window for sales rate calculation (avoids seasonal bias)
+SLOW_MOVING_DOH_THRESHOLD = 90  # days of stock above this → slow moving (cross-industry standard)
+DEAD_STOCK_DOH_THRESHOLD  = 180 # days of stock above this → dead stock / obsolete
 
 
 def run_inventory_analysis(company_id: int, db: Session) -> None:
@@ -86,25 +87,28 @@ def run_inventory_analysis(company_id: int, db: Session) -> None:
         }
 
     # ------------------------------------------------------------------
-    # 3. Total de unidades vendidas por SKU (ultimos 365 dias)
+    # 3. Total de unidades vendidas + primera fecha de venta por SKU
+    #    Se usa la fecha real de inicio por SKU para calcular avg_daily_sales
+    #    con precision (evita inflar days_of_stock en SKUs con menos historia)
     # ------------------------------------------------------------------
-    units_sold_by_item = {}
+    units_sold_by_item: dict[str, float] = {}
+    first_sale_by_item: dict[str, object] = {}
     if sales_start_date:
-        units_sold_by_item = {
-            row.item_id: float(row.total_sold)
-            for row in (
-                db.query(
-                    SalesTransaction.item_id,
-                    func.sum(SalesTransaction.units_sold).label("total_sold"),
-                )
-                .filter(SalesTransaction.company_id == company_id)
-                .filter(SalesTransaction.date >= sales_start_date)
-                .filter(SalesTransaction.date <= sales_end_date)
-                .group_by(SalesTransaction.item_id)
-                .all()
+        for row in (
+            db.query(
+                SalesTransaction.item_id,
+                func.sum(SalesTransaction.units_sold).label("total_sold"),
+                func.min(SalesTransaction.date).label("first_date"),
             )
-            if row.total_sold is not None
-        }
+            .filter(SalesTransaction.company_id == company_id)
+            .filter(SalesTransaction.date >= sales_start_date)
+            .filter(SalesTransaction.date <= sales_end_date)
+            .group_by(SalesTransaction.item_id)
+            .all()
+        ):
+            if row.total_sold is not None:
+                units_sold_by_item[row.item_id] = float(row.total_sold)
+                first_sale_by_item[row.item_id] = row.first_date
 
     # ------------------------------------------------------------------
     # 4. Limpiar analisis previo
@@ -137,25 +141,39 @@ def run_inventory_analysis(company_id: int, db: Session) -> None:
             immobilized_capital = None
             days_of_stock       = None
         else:
-            turnover_ratio   = total_units_sold / snapshot.inventory_on_hand
-            slow_moving_flag = turnover_ratio < SLOW_MOVING_THRESHOLD
-
-            # Capital inmovilizado solo aplica a SKUs lentos
-            immobilized_capital = (
-                float(snapshot.inventory_on_hand) * float(snapshot.unit_cost)
-                if slow_moving_flag else None
+            # Dias reales de historia del SKU dentro de la ventana de analisis.
+            # Mas preciso que usar siempre 365: un SKU nuevo no se penaliza
+            # injustamente por dividir sobre dias que no tiene datos.
+            sku_first_date = first_sale_by_item.get(snapshot.item_id)
+            sku_effective_days = (
+                max((sales_end_date - sku_first_date).days, 1)
+                if sku_first_date and sales_end_date
+                else SLOW_MOVING_DAYS
             )
 
-            # Dias de stock restantes al ritmo de ventas actual
-            avg_daily_sales = total_units_sold / SLOW_MOVING_DAYS
+            avg_daily_sales = total_units_sold / sku_effective_days
             days_of_stock = (
                 round(snapshot.inventory_on_hand / avg_daily_sales, 1)
                 if avg_daily_sales > 0 else None
             )
 
+            # Slow moving si supera el umbral DOH (cross-industry: 90 dias)
+            slow_moving_flag = (
+                days_of_stock > SLOW_MOVING_DOH_THRESHOLD
+                if days_of_stock is not None else None
+            )
+
+            # Capital inmovilizado solo aplica a SKUs lentos o dead stock
+            immobilized_capital = (
+                float(snapshot.inventory_on_hand) * float(snapshot.unit_cost)
+                if slow_moving_flag else None
+            )
+
         # --- stock_status consolidado ---
         if total_units_sold is None and avg_daily_forecast is None:
             stock_status = "pending"
+        elif days_of_stock is not None and days_of_stock > DEAD_STOCK_DOH_THRESHOLD:
+            stock_status = "dead_stock"
         elif slow_moving_flag:
             stock_status = "slow_moving"
         else:
