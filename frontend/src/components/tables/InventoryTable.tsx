@@ -76,11 +76,11 @@ function ReorderCell({ item }: { item: InventoryItem }) {
 // Filter tabs
 // ---------------------------------------------------------------------------
 
-type FilterType = "all" | "reorder" | "slow" | "dead"
+type FilterType = "all" | "reorder" | "slow" | "dead" | "alerts"
 
 interface FilterTabProps {
   active: FilterType
-  counts: { all: number; reorder: number; slow: number; dead: number }
+  counts: { all: number; reorder: number; slow: number; dead: number; alerts: number }
   onChange: (f: FilterType) => void
 }
 
@@ -90,6 +90,7 @@ function FilterTabs({ active, counts, onChange }: FilterTabProps) {
     { key: "reorder",label: "Por Reordenar",   count: counts.reorder},
     { key: "slow",   label: "Movimiento Lento",count: counts.slow   },
     { key: "dead",   label: "Stock Muerto",    count: counts.dead   },
+    { key: "alerts", label: "Alertas",         count: counts.alerts },
   ]
 
   return (
@@ -114,6 +115,8 @@ function FilterTabs({ active, counts, onChange }: FilterTabProps) {
                 ? "bg-warning/10 text-warning"
                 : tab.key === "dead" && tab.count > 0
                 ? "bg-destructive/10 text-destructive"
+                : tab.key === "alerts" && tab.count > 0
+                ? "bg-warning/10 text-warning"
                 : "bg-muted text-muted-foreground"
             )}
           >
@@ -140,12 +143,14 @@ export function InventoryTable({ items }: InventoryTableProps) {
   const reorderItems  = items.filter(isBelowReorder)
   const slowItems     = items.filter((i) => i.slow_moving_flag === true && i.stock_status !== "dead_stock")
   const deadItems     = items.filter((i) => i.stock_status === "dead_stock")
+  const alertItems = items.filter((i) => i.days_of_stock != null && i.days_of_stock <= i.lead_time_days * 1.5)
 
   const counts = {
     all:     items.length,
     reorder: reorderItems.length,
     slow:    slowItems.length,
     dead:    deadItems.length,
+    alerts:  alertItems.length,
   }
 
   const filtered = items
@@ -154,6 +159,7 @@ export function InventoryTable({ items }: InventoryTableProps) {
       if (filter === "reorder") return isBelowReorder(i)
       if (filter === "slow")    return i.slow_moving_flag === true && i.stock_status !== "dead_stock"
       if (filter === "dead")    return i.stock_status === "dead_stock"
+      if (filter === "alerts")  return i.days_of_stock != null && i.days_of_stock <= i.lead_time_days * 1.5
       return true
     })
 
