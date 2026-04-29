@@ -1,9 +1,11 @@
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 
+
+
 def train_predict_ets(train_series, forecast_periods):
     """
-    Entrena un modelo ETS y devuelve la predicción.
+    Train an ETS model and return the prediction.
     """
     model = ExponentialSmoothing(
         train_series,

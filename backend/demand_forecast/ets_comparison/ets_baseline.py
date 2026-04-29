@@ -7,17 +7,23 @@ from matplotlib.patches import Patch
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
+
 warnings.filterwarnings("ignore")
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PLOTS_DIR = os.path.join(BASE_DIR, "plots")
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 
+
+
 def load_data(filepath):
     data = pd.read_csv(filepath, parse_dates=["date"])
     data = data.sort_values(["item_id", "date"]).reset_index(drop=True)
     return data
+
+
 
 
 def evaluate(real, pred):
@@ -27,14 +33,18 @@ def evaluate(real, pred):
     return mae, rmse, mae_rel
 
 
+
+
 def plot_aggregated_forecast(agg_fcst, real_agg, cutoff):
     real_train = real_agg[real_agg["ds"] <= cutoff]
     real_test = real_agg[real_agg["ds"] > cutoff]
 
-    # Contexto: últimos 180 días de entrenamiento
+
+    # Context: last 180 days of training
     train_ctx = real_train[
         real_train["ds"] >= real_train["ds"].max() - pd.Timedelta(days=180)
     ]
+
 
     fig, ax = plt.subplots(figsize=(16, 5))
     ax.plot(
@@ -42,7 +52,7 @@ def plot_aggregated_forecast(agg_fcst, real_agg, cutoff):
         train_ctx["y"],
         color="steelblue",
         linewidth=0.9,
-        label="Histórico",
+        label="Historical",
         alpha=0.7,
     )
     ax.plot(
@@ -50,7 +60,7 @@ def plot_aggregated_forecast(agg_fcst, real_agg, cutoff):
         real_test["y"],
         color="coral",
         linewidth=0.9,
-        label="Real (Test)",
+        label="Actual (Test)",
         alpha=0.9,
     )
     ax.plot(
@@ -59,23 +69,27 @@ def plot_aggregated_forecast(agg_fcst, real_agg, cutoff):
         color="green",
         linewidth=1.5,
         linestyle="--",
-        label="Predicción ETS",
+        label="ETS Forecast",
     )
 
-    ax.set_title("ETS: Predicción Agregada — Ventas Diarias Totales (35 SKUs)")
-    ax.set_xlabel("Fecha")
-    ax.set_ylabel("Unidades Vendidas")
+
+    ax.set_title("ETS: Aggregated Forecast — Total Daily Sales (35 SKUs)")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Units Sold")
     ax.legend()
     plt.tight_layout()
     plt.savefig(os.path.join(PLOTS_DIR, "ets_04_aggregated_forecast.png"), dpi=150)
     plt.close()
-    print("Plot guardado: ets_04_aggregated_forecast.png")
+    print("Plot saved: ets_04_aggregated_forecast.png")
+
+
 
 
 def plot_metrics_summary(df_metrics):
     df_valid = df_metrics[df_metrics["avg_sales_test"] >= 5].copy()
     if df_valid.empty:
         return
+
 
     fig, ax = plt.subplots(figsize=(16, 5))
     colors = [
@@ -86,23 +100,25 @@ def plot_metrics_summary(df_metrics):
         df_valid["item_id"], df_valid["mae_relative_%"], color=colors, edgecolor="white"
     )
 
+
     mean_val = df_valid["mae_relative_%"].mean()
     ax.axhline(
         y=mean_val,
         color="black",
         linestyle="--",
         linewidth=1.2,
-        label=f"Promedio: {mean_val:.1f}%",
+        label=f"Average: {mean_val:.1f}%",
     )
-    ax.set_title("ETS: MAE Relativo por SKU (Promedio ≥ 5 ventas/día)")
+    ax.set_title("ETS: Relative MAE by SKU (Avg sales ≥ 5 units/day)")
     ax.set_xlabel("SKU")
-    ax.set_ylabel("MAE Relativo (%)")
+    ax.set_ylabel("Relative MAE (%)")
     ax.tick_params(axis="x", rotation=90, labelsize=7)
 
+
     legend_elements = [
-        Patch(facecolor="steelblue", label="Bueno (≤30%)"),
-        Patch(facecolor="goldenrod", label="Moderado (30-60%)"),
-        Patch(facecolor="coral", label="Difícil (>60%)"),
+        Patch(facecolor="steelblue", label="Good (≤30%)"),
+        Patch(facecolor="goldenrod", label="Moderate (30-60%)"),
+        Patch(facecolor="coral", label="Difficult (>60%)"),
     ]
     ax.legend(
         handles=legend_elements + ax.get_legend_handles_labels()[0],
@@ -110,51 +126,63 @@ def plot_metrics_summary(df_metrics):
         fontsize=8,
     )
 
+
     plt.tight_layout()
     plt.savefig(os.path.join(PLOTS_DIR, "ets_05_mae_relative_by_sku.png"), dpi=150)
     plt.close()
-    print("Plot guardado: ets_05_mae_relative_by_sku.png")
+    print("Plot saved: ets_05_mae_relative_by_sku.png")
+
+
 
 
 def run_ets_baseline(data_path=None, forecast_days=90):
-    print("=== Iniciando Entrenamiento de Baseline (ETS) ===")
+    print("=== Starting Baseline Training (ETS) ===")
 
-    # 1. Cargar datos
+
+    # 1. Load data
     if data_path is None:
         data_path = os.path.join(BASE_DIR, "..", "reference_sales.csv")
     data = load_data(data_path)
 
-    # 2. Definir el corte (Split)
+
+    # 2. Define the split
     max_date = data["date"].max()
     cutoff = max_date - pd.Timedelta(days=forecast_days)
+
 
     skus = data["item_id"].unique()
     resultados = []
     forecast_dfs = []
 
-    print(f"Fecha de corte (Cutoff): {cutoff.date()}")
-    print(f"Entrenando {len(skus)} modelos ETS independientemente...\n")
 
-    # 3. Loop de entrenamiento independiente por SKU
+    print(f"Cutoff date: {cutoff.date()}")
+    print(f"Training {len(skus)} ETS models independently...\n")
+
+
+    # 3. Independent training loop per SKU
     for sku in skus:
         df_sku = data[data["item_id"] == sku].copy()
 
-        # ETS requiere un índice de tiempo diario sin huecos.
-        # Agrupamos por día (por si hay duplicados) y rellenamos días sin venta con 0.
+
+        # ETS requires a daily time index without gaps.
+        # Group by day (in case of duplicates) and fill days without sales with 0.
         df_sku = df_sku.groupby("date")["units_sold"].sum().reset_index()
         df_sku = df_sku.set_index("date").asfreq("D", fill_value=0).reset_index()
 
-        # Separar Train y Test
+
+        # Separate Train and Test
         train = df_sku[df_sku["date"] <= cutoff]
         test = df_sku[df_sku["date"] > cutoff]
 
-        if len(train) < 14:  # ETS necesita al menos 2 periodos estacionales (14 días)
-            print(f"  ✗ {sku:<20} - Datos insuficientes para entrenar")
+
+        if len(train) < 14:  # ETS needs at least 2 seasonal periods (14 days)
+            print(f"  ✗ {sku:<20} - Insufficient data to train")
             continue
 
+
         try:
-            # 4. Entrenar ETS
-            # Usamos estacionalidad semanal (7) y modo aditivo (similar al default de Prophet)
+            # 4. Train ETS
+            # Use weekly seasonality (7) and additive mode (similar to Prophet default)
             model = ExponentialSmoothing(
                 train["units_sold"],
                 trend="add",
@@ -163,10 +191,12 @@ def run_ets_baseline(data_path=None, forecast_days=90):
                 initialization_method="estimated",
             ).fit()
 
-            # 5. Predecir (y evitar predicciones negativas con un clip a 0)
+
+            # 5. Predict (and avoid negative predictions with clip to 0)
             forecast = model.forecast(forecast_days).clip(lower=0)
 
-            # Almacenar predicciones para la gráfica agregada global
+
+            # Store predictions for global aggregated chart
             forecast_dates = pd.date_range(
                 start=cutoff + pd.Timedelta(days=1), periods=forecast_days, freq="D"
             )
@@ -175,13 +205,16 @@ def run_ets_baseline(data_path=None, forecast_days=90):
             )
             forecast_dfs.append(df_fcst)
 
+
             if len(test) > 0:
-                # 6. Evaluar
+                # 6. Evaluate
                 pred_aligned = forecast.values[: len(test)]
                 real_aligned = test["units_sold"].values
 
+
                 mae, rmse, mae_rel = evaluate(real_aligned, pred_aligned)
                 avg_sales = real_aligned.mean()
+
 
                 resultados.append(
                     {
@@ -196,14 +229,16 @@ def run_ets_baseline(data_path=None, forecast_days=90):
         except Exception as e:
             print(f"  ✗ {sku:<20} - Error: {e}")
 
-    # 7. Resumen Final (Aplicando regla limitante >= 5 unidades/día)
+
+    # 7. Final Summary (Applying limiting rule >= 5 units/day)
     df_metrics = pd.DataFrame(resultados)
     if not df_metrics.empty:
         df_valid = df_metrics[df_metrics["avg_sales_test"] >= 5]
 
-        print("\n── Resumen de Desempeño Baseline (ETS) ──────────────────────")
-        print(f"  SKUs entrenados:           {len(df_metrics)}")
-        print(f"  SKUs con demanda >=5/día:  {len(df_valid)}")
+
+        print("\n── Baseline Performance Summary (ETS) ──────────────────────")
+        print(f"  SKUs trained:              {len(df_metrics)}")
+        print(f"  SKUs with demand >=5/day:  {len(df_valid)}")
         if len(df_valid) > 0:
             print(
                 f"  Avg MAE relative:          {df_valid['mae_relative_%'].mean():.1f}%"
@@ -219,8 +254,9 @@ def run_ets_baseline(data_path=None, forecast_days=90):
             )
         print("─────────────────────────────────────────────────────────────\n")
 
-        # 8. Generar las gráficas comparativas
-        print("Generando plots de evidencia para ETS...")
+
+        # 8. Generate comparative charts
+        print("Generating evidence plots for ETS...")
         if forecast_dfs:
             agg_fcst = (
                 pd.concat(forecast_dfs, ignore_index=True)
@@ -236,10 +272,11 @@ def run_ets_baseline(data_path=None, forecast_days=90):
             )
             plot_aggregated_forecast(agg_fcst, real_agg, cutoff)
 
+
         plot_metrics_summary(df_metrics)
-        print(
-            f"\n✅ ¡Proceso completado! Revisa la carpeta ml_plots para ver los resultados visuales."
-        )
+        print(f"\n✅ Process completed! Check the ml_plots folder for visual results.")
+
+
 
 
 if __name__ == "__main__":
