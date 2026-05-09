@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Activity,
   Package,
+  TrendingUp,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -21,6 +22,7 @@ import { Button } from "@/components/ui/button"
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/predictions", label: "Predicciones", icon: BarChart3 },
+  { href: "/ventas-historicas", label: "Ventas Históricas", icon: TrendingUp },
   { href: "/inventory", label: "Inventario", icon: Package },
   { href: "/data-ingestion", label: "Ingesta de Datos", icon: Upload },
 ]
