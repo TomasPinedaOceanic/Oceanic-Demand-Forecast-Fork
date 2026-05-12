@@ -138,7 +138,7 @@ export function StockProjectionChart({ item, compact = false }: Props) {
               tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)}
               width={compact ? 28 : 40}
             />
-            {!compact && <Tooltip content={<CustomTooltip />} />}
+            <Tooltip content={<CustomTooltip />} />
             {!compact && (
               <Legend
                 formatter={(value) => (
@@ -170,7 +170,7 @@ export function StockProjectionChart({ item, compact = false }: Props) {
               stroke={lineColor}
               strokeWidth={compact ? 1.5 : 2}
               dot={false}
-              activeDot={compact ? false : { r: 4 }}
+              activeDot={{ r: compact ? 3 : 4 }}
             />
 
             {/* Punto de cruce con reorder */}

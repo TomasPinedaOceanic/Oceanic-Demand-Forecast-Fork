@@ -7,7 +7,7 @@ import { InventoryTable } from "@/components/tables/InventoryTable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getInventory, getInventoryAlerts, type InventoryItem, type StockoutAlert, type AlertMode } from "@/lib/api"
 import { PackageX, ShoppingCart, TrendingDown, DollarSign, BarChart2, Table2 } from "lucide-react"
-import { StockProjectionChart } from "@/components/charts/StockProjectionChart"
+import { InventoryProjectionGrid } from "@/components/charts/InventoryProjectionGrid"
 
 type LoadState = "loading" | "ready" | "empty" | "error"
 type ViewMode  = "table" | "projection"
@@ -162,13 +162,10 @@ export default function InventoryPage() {
           <InventoryTable items={items} alerts={alerts} alertMode={alertMode} />
         )}
         {state === "ready" && viewMode === "projection" && (
-          <div className="rounded-xl border bg-card p-6 shadow-sm">
-            <h3 className="mb-1 text-sm font-semibold text-card-foreground">
-              {items[0]?.item_id ?? "SKU"} — {items[0]?.store_id ?? ""}
-            </h3>
-            <p className="mb-4 text-xs text-muted-foreground">Proyección de stock próximos 30 días</p>
-            {items[0] && <StockProjectionChart item={items[0]} />}
-          </div>
+          <InventoryProjectionGrid
+            items={items}
+            alerts={alerts}
+          />
         )}
         {state === "empty" && (
           <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-center">
