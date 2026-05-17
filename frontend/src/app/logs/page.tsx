@@ -220,7 +220,7 @@ export default function LogsPage() {
                         className="border-b border-slate-50 transition-colors hover:bg-slate-50"
                       >
                         <td className="px-4 py-3 text-slate-400">{log.id}</td>
-                        <td className="max-w-[200px] truncate px-4 py-3 font-mono text-xs text-slate-700">
+                        <td className="max-w-[200px] truncate px-4 py-3 text-xs text-slate-700">
                           {log.filename}
                         </td>
                         <td className="px-4 py-3">

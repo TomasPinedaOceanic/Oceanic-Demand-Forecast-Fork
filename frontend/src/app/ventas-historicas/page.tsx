@@ -34,16 +34,12 @@ import { cn } from "@/lib/utils"
 import { format, parseISO, subMonths, startOfMonth, endOfMonth } from "date-fns"
 
 const PAGE_SIZE = 10
-const CHART_COLORS = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-  "oklch(0.50 0.04 250)",
-  "oklch(0.50 0.04 250)",
-  "oklch(0.50 0.04 250)",
-]
+function getBarColor(index: number, total: number): string {
+  const t = total <= 1 ? 0 : index / (total - 1)
+  const l = (0.42 + t * 0.28).toFixed(2)
+  const c = (0.16 - t * 0.08).toFixed(2)
+  return `oklch(${l} ${c} 250)`
+}
 
 const CAT_STYLES: Record<string, string> = {
   FOODS: "bg-emerald-50 text-emerald-700 border border-emerald-200",
@@ -385,7 +381,7 @@ export default function VentasHistoricasPage() {
                 <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   SKU Más Vendido
                 </span>
-                <span className="mt-1 font-mono text-lg font-bold tracking-tight text-foreground">
+                <span className="mt-1 text-lg font-bold tracking-tight text-foreground">
                   {topSku.id}
                 </span>
                 <span className="text-xs text-muted-foreground">
@@ -526,7 +522,7 @@ export default function VentasHistoricasPage() {
                   type="category"
                   dataKey="sku"
                   width={140}
-                  tick={{ fontSize: 11, fontFamily: "var(--font-mono)", fill: "var(--foreground)" }}
+                  tick={{ fontSize: 11, fill: "var(--foreground)" }}
                 />
                 <Tooltip
                   formatter={(v: number) => [v.toLocaleString("es-CO"), "Unidades"]}
@@ -540,7 +536,7 @@ export default function VentasHistoricasPage() {
                 />
                 <Bar dataKey="units" radius={[0, 4, 4, 0]} label={{ position: "right", fontSize: 11, formatter: (v: number) => v.toLocaleString() }}>
                   {chartData.map((_, i) => (
-                    <Cell key={i} fill={CHART_COLORS[Math.min(i, CHART_COLORS.length - 1)]} />
+                    <Cell key={i} fill={getBarColor(i, chartData.length)} />
                   ))}
                 </Bar>
               </BarChart>
@@ -622,7 +618,7 @@ export default function VentasHistoricasPage() {
                           {r.date}
                         </td>
                         <td className="px-4 py-3">
-                          <span className="font-mono text-xs font-medium text-foreground">
+                          <span className="text-xs font-medium text-foreground">
                             {r.item_id}
                           </span>
                         </td>
