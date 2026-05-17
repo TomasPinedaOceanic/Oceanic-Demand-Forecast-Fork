@@ -194,4 +194,26 @@ export function getModelMetrics(): Promise<ModelMetricsResponse> {
   return api.get<ModelMetricsResponse>("/api/predictions/metrics").then((r) => r.data)
 }
 
+// ---------------------------------------------------------------------------
+// Demand deviation alerts (US-17)
+// ---------------------------------------------------------------------------
+
+export interface DemandAlert {
+  item_id: string
+  historical_avg: number
+  forecast_avg: number
+  deviation_pct: number
+  direction: "surge" | "drop"
+  severity: "warning" | "critical"
+}
+
+export interface DemandAlertsResponse {
+  alerts: DemandAlert[]
+  message: string
+}
+
+export function getDemandAlerts(): Promise<DemandAlertsResponse> {
+  return api.get<DemandAlertsResponse>("/api/demand-alerts").then((r) => r.data)
+}
+
 export default api
