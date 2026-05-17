@@ -4,20 +4,6 @@ Demand forecasting and inventory management platform for Colombian SMEs. Users u
 
 ---
 
-## Features
-
-- **Data ingestion** — Upload sales and inventory files (CSV / Excel) with automatic validation and cleaning.
-- **Demand forecasting** — Per-SKU Prophet models trained in the background; 90-day predictions with confidence intervals.
-- **Sales view** — Explore historical transactions with filters by SKU, store, category, and date range. KPI cards for total units, revenue, and top-selling SKU.
-- **Inventory management** — Reorder point, safety stock, slow-moving detection, and immobilized capital per SKU.
-- **Stockout alerts** — Identifies SKUs at risk based on forecast demand vs. available stock and lead time.
-- **Demand deviation alerts** — Flags SKUs where predicted demand deviates significantly (≥25%) from recent historical behavior.
-- **Stock projection** — 30-day inventory burn-down chart per SKU using forecast demand.
-- **Report export** — Download forecast and inventory data as CSV.
-- **Audit logs** — Records every data upload and model execution with status and metrics.
-
----
-
 ## Tech Stack
 
 | Layer | Technology |
