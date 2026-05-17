@@ -5,12 +5,14 @@ import axios from "axios"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { InventoryTable } from "@/components/tables/InventoryTable"
 import { Skeleton } from "@/components/ui/skeleton"
-import { getInventory, getInventoryAlerts, type InventoryItem, type StockoutAlert, type AlertMode } from "@/lib/api"
-import { PackageX, ShoppingCart, TrendingDown, DollarSign, BarChart2, Table2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { getInventory, getInventoryAlerts, type StockoutAlert, type AlertMode } from "@/lib/api"
+import { PackageX, ShoppingCart, TrendingDown, DollarSign, BarChart2, Table2, Download } from "lucide-react"
 import { InventoryProjectionGrid } from "@/components/charts/InventoryProjectionGrid"
 import { StockProjectionChart } from "@/components/charts/StockProjectionChart"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { getPredictions, type PredictionRecord, type InventoryItem } from "@/lib/api"
+import { exportToCSV } from "@/lib/export"
 
 type LoadState = "loading" | "ready" | "empty" | "error"
 type ViewMode  = "table" | "projection"
@@ -144,29 +146,51 @@ export default function InventoryPage() {
 
       {/* Toggle Vista */}
       {state === "ready" && (
-        <div className="mb-6 flex gap-2">
-          <button
-            onClick={() => setViewMode("table")}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-              viewMode === "table"
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
+        <div className="mb-6 flex items-center justify-between">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setViewMode("table")}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                viewMode === "table"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+            >
+              <Table2 className="h-4 w-4" />
+              Vista Tabla
+            </button>
+            <button
+              onClick={() => setViewMode("projection")}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                viewMode === "projection"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+            >
+              <BarChart2 className="h-4 w-4" />
+              Vista Proyección
+            </button>
+          </div>
+
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => exportToCSV(items, "estado_inventario.csv", {
+              item_id: "SKU",
+              store_id: "Tienda",
+              current_stock: "Stock_Actual",
+              available_stock: "Stock_Disponible",
+              lead_time_days: "Lead_Time",
+              unit_cost: "Costo_Unitario",
+              next_month_forecast: "Pronostico_Proximo_Mes",
+              reorder_point: "Punto_Reorden",
+              days_of_stock: "Dias_Inventario",
+              immobilized_capital: "Capital_Inmovilizado"
+            })}
           >
-            <Table2 className="h-4 w-4" />
-            Vista Tabla
-          </button>
-          <button
-            onClick={() => setViewMode("projection")}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-              viewMode === "projection"
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            <BarChart2 className="h-4 w-4" />
-            Vista Proyección
-          </button>
+            <Download className="h-4 w-4" />
+            Exportar Inventario
+          </Button>
         </div>
       )}
 
