@@ -22,9 +22,11 @@ from database.models import (  # noqa: E402
     DataSource,
     InventoryAnalysis,
     InventorySnapshot,
+    ModelExecutionLog,
     ModelMetrics,
     Prediction,
     SalesTransaction,
+    UploadLog,
 )
 
 
@@ -49,6 +51,8 @@ def engine():
 
 def _truncate_all(session) -> None:
     """Delete all rows in FK-safe order."""
+    session.query(ModelExecutionLog).delete()
+    session.query(UploadLog).delete()
     session.query(ModelMetrics).delete()
     session.query(InventoryAnalysis).delete()
     session.query(InventorySnapshot).delete()

@@ -7,6 +7,9 @@ spinning up a real server. Covers:
   - US-11: GET /api/inventory/alerts
   - US-12: GET /api/predictions/status
   - US-13: GET /api/predictions/metrics
+  - US-15: GET /api/sales, GET /api/sales/range
+  - US-17: GET /api/demand-alerts
+  - US-20: GET /api/logs/uploads, GET /api/logs/model-executions
 """
 
 import pytest
@@ -16,8 +19,11 @@ from database.models import (
     Company,
     DataSource,
     InventorySnapshot,
+    ModelExecutionLog,
     ModelMetrics,
     Prediction,
+    SalesTransaction,
+    UploadLog,
 )
 
 
@@ -231,3 +237,230 @@ def test_get_metrics_returns_aggregate_and_per_sku(client, db):
     assert float(data["aggregate"]["mae"]) == pytest.approx(2.5, rel=0.01)
     assert len(data["per_sku"]) == 1
     assert data["per_sku"][0]["item_id"] == "SKU-X"
+
+
+# ---------------------------------------------------------------------------
+# US-15 — Sales View
+# ---------------------------------------------------------------------------
+
+def test_get_sales_returns_rows_when_data_exists(client, db):
+    """Happy path: sales data in DB → rows returned with correct item_id and units_sold."""
+    company = _seed_company(db)
+    db.add(SalesTransaction(
+        company_id=company.id,
+        item_id="FOODS_001",
+        date=date(2017, 1, 1),
+        units_sold=10,
+        sell_price=5.0,
+    ))
+    db.commit()
+
+    response = client.get("/api/sales")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["item_id"] == "FOODS_001"
+    assert data[0]["units_sold"] == 10
+
+
+def test_get_sales_no_data_returns_empty_list(client):
+    """Alt path: no sales in DB → endpoint returns empty list, not 404."""
+    response = client.get("/api/sales")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_sales_filters_by_item_id(client, db):
+    """Happy path: item_id query param → only matching rows are returned."""
+    company = _seed_company(db)
+    for item in ["FOODS_001", "HOBBIES_001"]:
+        db.add(SalesTransaction(
+            company_id=company.id,
+            item_id=item,
+            date=date(2017, 1, 1),
+            units_sold=5,
+            sell_price=2.0,
+        ))
+    db.commit()
+
+    response = client.get("/api/sales", params={"item_id": "FOODS_001"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["item_id"] == "FOODS_001"
+
+
+def test_get_sales_range_returns_min_max_dates(client, db):
+    """Happy path: sales data exists → min_date and max_date match seeded data."""
+    company = _seed_company(db)
+    for d_val in [date(2017, 1, 1), date(2017, 6, 30)]:
+        db.add(SalesTransaction(
+            company_id=company.id,
+            item_id="SKU-X",
+            date=d_val,
+            units_sold=1,
+            sell_price=1.0,
+        ))
+    db.commit()
+
+    response = client.get("/api/sales/range")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["min_date"] == "2017-01-01"
+    assert data["max_date"] == "2017-06-30"
+
+
+def test_get_sales_range_no_data_returns_404(client):
+    """Alt path: no sales data in DB → /api/sales/range returns 404."""
+    response = client.get("/api/sales/range")
+
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# US-17 — Demand Prediction Alerts
+# ---------------------------------------------------------------------------
+
+def test_get_demand_alerts_no_sales_returns_empty(client):
+    """Alt path: no sales data → alerts list is empty regardless of forecast."""
+    response = client.get("/api/demand-alerts")
+
+    assert response.status_code == 200
+    assert response.json()["alerts"] == []
+
+
+def test_get_demand_alerts_critical_sku_appears(client, db):
+    """Happy path: SKU whose 30-day forecast avg is 50% above its 30-day
+    historical avg appears with severity='critical' and direction='surge'."""
+    company = _seed_company(db)
+
+    # 31 days of historical sales at 2 units/day
+    for i in range(31):
+        db.add(SalesTransaction(
+            company_id=company.id,
+            item_id="SURGE-001",
+            date=date(2017, 1, 1) + timedelta(days=i),
+            units_sold=2,
+            sell_price=5.0,
+        ))
+
+    # 30 days of forecast at 3 units/day → 50% above historical
+    for i in range(30):
+        db.add(Prediction(
+            company_id=company.id,
+            item_id="SURGE-001",
+            forecast_date=date(2017, 2, 1) + timedelta(days=i),
+            predicted_demand=3.0,
+            yhat_lower=2.5,
+            yhat_upper=3.5,
+        ))
+    db.commit()
+
+    response = client.get("/api/demand-alerts")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["alerts"]) >= 1
+    alert = next(a for a in data["alerts"] if a["item_id"] == "SURGE-001")
+    assert alert["severity"] == "critical"
+    assert alert["direction"] == "surge"
+    assert float(alert["deviation_pct"]) == pytest.approx(50.0, rel=0.05)
+
+
+def test_get_demand_alerts_low_deviation_sku_excluded(client, db):
+    """Alt path: deviation < 25% threshold → SKU does not appear in alerts."""
+    company = _seed_company(db)
+
+    # historical avg = 2, forecast avg = 2.1 → 5% deviation → below threshold
+    for i in range(31):
+        db.add(SalesTransaction(
+            company_id=company.id,
+            item_id="STABLE-001",
+            date=date(2017, 1, 1) + timedelta(days=i),
+            units_sold=2,
+            sell_price=5.0,
+        ))
+    for i in range(30):
+        db.add(Prediction(
+            company_id=company.id,
+            item_id="STABLE-001",
+            forecast_date=date(2017, 2, 1) + timedelta(days=i),
+            predicted_demand=2.1,
+            yhat_lower=1.9,
+            yhat_upper=2.3,
+        ))
+    db.commit()
+
+    response = client.get("/api/demand-alerts")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert all(a["item_id"] != "STABLE-001" for a in data["alerts"])
+
+
+# ---------------------------------------------------------------------------
+# US-20 — Audit Logs
+# ---------------------------------------------------------------------------
+
+def test_get_upload_logs_empty_when_no_records(client):
+    """Alt path: no upload logs in DB → endpoint returns empty list."""
+    response = client.get("/api/logs/uploads")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_upload_logs_returns_recorded_entries(client, db):
+    """Happy path: upload log seeded in DB → returned with correct fields."""
+    db.add(UploadLog(
+        filename="sales_2017.csv",
+        file_type="sales",
+        status="success",
+        records_processed=42,
+    ))
+    db.commit()
+
+    response = client.get("/api/logs/uploads")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["filename"] == "sales_2017.csv"
+    assert data[0]["file_type"] == "sales"
+    assert data[0]["status"] == "success"
+    assert data[0]["records_processed"] == 42
+
+
+def test_get_model_execution_logs_empty_when_no_records(client):
+    """Alt path: no model execution logs in DB → endpoint returns empty list."""
+    response = client.get("/api/logs/model-executions")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_model_execution_logs_returns_recorded_entries(client, db):
+    """Happy path: model execution log seeded in DB → returned with numeric metrics."""
+    db.add(ModelExecutionLog(
+        status="success",
+        skus_trained=35,
+        avg_mae=2.5,
+        avg_rmse=3.1,
+        avg_mape=15.0,
+        avg_coverage_ic=0.85,
+        duration_seconds=120.5,
+    ))
+    db.commit()
+
+    response = client.get("/api/logs/model-executions")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["status"] == "success"
+    assert data[0]["skus_trained"] == 35
+    assert float(data[0]["avg_mape"]) == pytest.approx(15.0, rel=0.01)
